@@ -1,23 +1,20 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue Nov 17 14:13:25 2020
+Created on Wed Aug  5 14:35:48 2020
 
-@author: Home
+@author: ek672
 """
 
-
 import numpy as np
-import matplotlib.pyplot as plt
+
 #local imports
-import params as p
-import fft_legendre_trans as rfl
+import spectral_transform as rfl
 import filters
-import testing_plots
+
 
 
 ## PHI tstep
-def phi_timestep():
+def phi_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFM,dt,a,K4,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
     Phicomp1=rfl.fwd_leg(Phim0, J, M, N, Pmn, w)
     
     Phicomp2prep=np.multiply(tstepcoeff1,np.multiply((1j)*mJarray,Cm))
@@ -38,13 +35,13 @@ def phi_timestep():
     if diffflag==1:
         Phimntstep=filters.diffusion(Phimntstep, sigmaPhi)    
     
-    test,newPhimtstep=rfl.invrs_leg(Phimntstep, I,J, M, N, Pmn)
+    newPhimtstep=rfl.invrs_leg(Phimntstep, I,J, M, N, Pmn)
     newPhitstep=rfl.invrs_fft(newPhimtstep, I)
 
     
     return Phimntstep,newPhitstep
 
-def delta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFM,dt,a,K4,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi):
+def delta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFM,dt,a,K4,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
     deltacomp1=rfl.fwd_leg(deltam0, J, M, N, Pmn, w)
     
     deltacomp2prep=np.multiply(np.multiply(tstepcoeff1,(1j)*mJarray),Bm)
@@ -86,14 +83,13 @@ def delta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,E
     if diffflag==1:
         deltamntstep=filters.diffusion(deltamntstep, sigma)
 
-    test,newdeltamtstep=rfl.invrs_leg(deltamntstep, I,J, M, N, Pmn)
+    newdeltamtstep=rfl.invrs_leg(deltamntstep, I,J, M, N, Pmn)
     newdeltatstep=rfl.invrs_fft(newdeltamtstep, I)
     return deltamntstep,newdeltatstep
 
 
-def eta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFM,dt,a,K4,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi):
+def eta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFM,dt,a,K4,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
 
-    ## ETA tstep seems to work!
     etacomp1=rfl.fwd_leg(etam0, J, M, N, Pmn, w)
 
     etacomp2prep=np.multiply(np.multiply(tstepcoeff1,(1j)*mJarray),Am)
@@ -122,7 +118,6 @@ def eta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,
         etaf4=rfl.fwd_leg(etaf4prep, J, M, N, Hmn, w)
         
         etaforcing=-etaf1+etaf2+etaf3+etaf4
-        #etaforcing=etaf3+etaf4
     
         etamntstep=etamntstep+etaforcing
 
@@ -130,6 +125,6 @@ def eta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,
     if diffflag==1:
         etamntstep=filters.diffusion(etamntstep, sigma)
     
-    test,newetamtstep=rfl.invrs_leg(etamntstep, I,J, M, N, Pmn)
+    newetamtstep=rfl.invrs_leg(etamntstep, I,J, M, N, Pmn)
     newetatstep=rfl.invrs_fft(newetamtstep, I)
     return etamntstep,newetatstep
