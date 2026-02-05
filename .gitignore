@@ -78,6 +78,10 @@ datasets/
 *.pickle
 
 # === Model / run artifacts ===
+tests/_compare_outputs/*
+
+
+# === Model / run artifacts ===
 runs/
 checkpoints/
 ckpt/
@@ -113,3 +117,9 @@ secrets.*
 *.tar
 *.tar.gz
 *.tgz
+
+# generated test outputs
+/tests/_compare_outputs/
+
+# generated test outputs
+/tests/_compare_outputs/
