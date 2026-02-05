@@ -4,8 +4,8 @@ Primary entry point: run_model_scan(...)
   - Pure JAX computations (no side effects), suitable for jax.grad and jax.jit.
   - Returns time series arrays on the physical (mu, lambda) grid.
 
-A legacy-style wrapper run_model(...) is provided for compatibility, but it is not
-end-to-end differentiable due to I/O and plotting side effects.
+A legacy-style wrapper run_model(...) is provided for signature compatibility,
+but raises NotImplementedError — see its docstring for details.
 """
 from __future__ import annotations
 
@@ -24,56 +24,44 @@ from . import time_stepping
 
 
 # =============================================================================
-# Types (integrated from types.py)
+# Types
 # =============================================================================
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class Static:
-    """Static (time-invariant) model data.
+    """Static (time-invariant) model data."""
 
-    Everything here should be treated as a constant w.r.t. differentiation. In practice,
-    these arrays participate in JAX computations and gradients flow through them if you
-    choose to differentiate w.r.t. them, but typical usage keeps them fixed.
-    """
-
-    # grid / spectral sizes
     I: int
     J: int
     M: int
     N: int
 
-    # physical constants
     dt: float
     a: float
     omega: float
     g: float
     Phibar: float
 
-    # grid
-    lambdas: jnp.ndarray  # (I,)
-    mus: jnp.ndarray      # (J,)
-    w: jnp.ndarray        # (J,)
+    lambdas: jnp.ndarray
+    mus: jnp.ndarray
+    w: jnp.ndarray
 
-    # basis
-    Pmn: jnp.ndarray      # (J, M+1, N+1)
-    Hmn: jnp.ndarray      # (J, M+1, N+1)
+    Pmn: jnp.ndarray
+    Hmn: jnp.ndarray
 
-    # spectral helper arrays
-    fmn: jnp.ndarray          # (M+1, N+1)
-    tstepcoeffmn: jnp.ndarray # (M+1, N+1)
-    tstepcoeff: jnp.ndarray   # (J, M+1)
-    tstepcoeff2: jnp.ndarray  # (J, M+1)
-    mJarray: jnp.ndarray      # (J, M+1)
-    marray: jnp.ndarray       # (M+1, N+1)
-    narray: jnp.ndarray       # (M+1, N+1)
+    fmn: jnp.ndarray
+    tstepcoeffmn: jnp.ndarray
+    tstepcoeff: jnp.ndarray
+    tstepcoeff2: jnp.ndarray
+    mJarray: jnp.ndarray
+    marray: jnp.ndarray
+    narray: jnp.ndarray
 
-    # filtering
-    sigma: jnp.ndarray        # (M+1, N+1)
-    sigmaPhi: jnp.ndarray     # (M+1, N+1)
+    sigma: jnp.ndarray
+    sigmaPhi: jnp.ndarray
 
-    # forcing equilibrium geopotential (physical grid); may be zeros if forcing disabled
-    Phieq: jnp.ndarray        # (J, I)
+    Phieq: jnp.ndarray
 
     def tree_flatten(self) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
         children = (
@@ -119,7 +107,6 @@ class Static:
 class State:
     """Two-level (prev/curr) spectral+physical state for leapfrog-style stepping."""
 
-    # Fourier coefficients at t-1 and t (J, M+1)
     etam_prev: jnp.ndarray
     etam_curr: jnp.ndarray
     deltam_prev: jnp.ndarray
@@ -127,7 +114,6 @@ class State:
     Phim_prev: jnp.ndarray
     Phim_curr: jnp.ndarray
 
-    # physical fields at t-1 and t (J, I)
     eta_prev: jnp.ndarray
     delta_prev: jnp.ndarray
     Phi_prev: jnp.ndarray
@@ -138,19 +124,16 @@ class State:
     U_curr: jnp.ndarray
     V_curr: jnp.ndarray
 
-    # nonlinear terms at t (Fourier, J, M+1)
     Am_curr: jnp.ndarray
     Bm_curr: jnp.ndarray
     Cm_curr: jnp.ndarray
     Dm_curr: jnp.ndarray
     Em_curr: jnp.ndarray
 
-    # forcing at t (Fourier, J, M+1)
     PhiFm_curr: jnp.ndarray
     Fm_curr: jnp.ndarray
     Gm_curr: jnp.ndarray
 
-    # once "dead" due to blow-up, we stop updating
     dead: jnp.ndarray  # scalar bool
 
     def tree_flatten(self):
@@ -165,8 +148,7 @@ class State:
             self.PhiFm_curr, self.Fm_curr, self.Gm_curr,
             self.dead,
         )
-        aux = {}
-        return children, aux
+        return children, {}
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -229,7 +211,6 @@ def build_static(
     """Build all static arrays (grid, basis, coefficients, filters)."""
     N, I, J, _otherdt, lambdas, mus, w = initial_conditions.spectral_params(M)
 
-    # If SciPy basis was requested but SciPy is not importable, fall back to recurrence.
     if use_scipy_basis:
         try:
             import scipy  # noqa: F401
@@ -239,12 +220,12 @@ def build_static(
 
     fmn = initial_conditions.coriolismn(M, omega)
 
-    tstepcoeffmn = time_stepping.tstepcoeffmn(M, N, a)
-    tstepcoeff = time_stepping.tstepcoeff(J, M, dt, mus, a)
-    tstepcoeff2 = time_stepping.tstepcoeff2(J, M, dt, a)
-    mJarr = time_stepping.mJarray(J, M)
-    marr = time_stepping.marray(M, N)
-    narr = time_stepping.narray(M, N)
+    _tstepcoeffmn = time_stepping.tstepcoeffmn(M, N, a)
+    _tstepcoeff = time_stepping.tstepcoeff(J, M, dt, mus, a)
+    _tstepcoeff2 = time_stepping.tstepcoeff2(J, M, dt, a)
+    _mJarray = time_stepping.mJarray(J, M)
+    _marray = time_stepping.marray(M, N)
+    _narray = time_stepping.narray(M, N)
 
     sigma = filters.sigma6(M, N, K6, a, dt)
     sigmaPhi = filters.sigma6Phi(M, N, K6Phi, a, dt)
@@ -260,12 +241,12 @@ def build_static(
         lambdas=lambdas, mus=mus, w=w,
         Pmn=Pmn, Hmn=Hmn,
         fmn=fmn,
-        tstepcoeffmn=tstepcoeffmn,
-        tstepcoeff=tstepcoeff,
-        tstepcoeff2=tstepcoeff2,
-        mJarray=mJarr,
-        marray=marr,
-        narray=narr,
+        tstepcoeffmn=_tstepcoeffmn,
+        tstepcoeff=_tstepcoeff,
+        tstepcoeff2=_tstepcoeff2,
+        mJarray=_mJarray,
+        marray=_marray,
+        narray=_narray,
         sigma=sigma,
         sigmaPhi=sigmaPhi,
         Phieq=Phieq,
@@ -273,21 +254,11 @@ def build_static(
 
 
 def _init_state(static: Static, *, test: Optional[int], a1: float, taurad: float, taudrag: float) -> State:
-    """Initialize (prev,curr) physical fields, winds, nonlinear terms, and forcing.
-
-    Fixes:
-      1) state_var_init takes etaamp plus positional *args (a, sina, cosa, Phibar, Phiamp) for tests;
-         it does NOT accept those as keywords.
-      2) Match SWAMPE: compute (SU0, sina, cosa, etaamp, Phiamp) via test1_init() regardless of test,
-         but only pass the extra args to state_var_init when test is 1 or 2.
-    """
+    """Initialize (prev,curr) physical fields, winds, nonlinear terms, and forcing."""
     I, J, M, N = static.I, static.J, static.M, static.N
 
-    # Match SWAMPE: always compute these (even if test is None/other),
-    # because etaamp is used in the default (test=None) initialization.
     SU0, sina, cosa, etaamp, Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
 
-    # state variables (prev=0, curr=1)
     if test in (1, 2):
         eta0, eta1, delta0, delta1, Phi0, Phi1 = initial_conditions.state_var_init(
             I, J, static.mus, static.lambdas, test, etaamp,
@@ -298,13 +269,10 @@ def _init_state(static: Static, *, test: Optional[int], a1: float, taurad: float
             I, J, static.mus, static.lambdas, test, etaamp
         )
 
-    # winds
     U0, V0 = initial_conditions.velocity_init(I, J, SU0, cosa, sina, static.mus, static.lambdas, test)
 
-    # Nonlinear terms at "curr" (time index 1); start from initial fields.
     A1, B1, C1, D1, E1 = initial_conditions.ABCDE_init(U0, V0, eta1, Phi1, static.mus, I, J)
 
-    # Fourier coefficients (mu,m) for prev and curr
     etam0 = st.fwd_fft_trunc(eta0, I, M)
     etam1 = st.fwd_fft_trunc(eta1, I, M)
     deltam0 = st.fwd_fft_trunc(delta0, I, M)
@@ -318,7 +286,6 @@ def _init_state(static: Static, *, test: Optional[int], a1: float, taurad: float
     Dm1 = st.fwd_fft_trunc(D1, I, M)
     Em1 = st.fwd_fft_trunc(E1, I, M)
 
-    # forcing (only in the forced run case: test is None)
     if test is None:
         Q1 = forcing.Qfun(static.Phieq, Phi1, static.Phibar, taurad)
         PhiF1 = Q1
@@ -335,14 +302,11 @@ def _init_state(static: Static, *, test: Optional[int], a1: float, taurad: float
         etam_prev=etam0, etam_curr=etam1,
         deltam_prev=deltam0, deltam_curr=deltam1,
         Phim_prev=Phim0, Phim_curr=Phim1,
-
         eta_prev=eta0, delta_prev=delta0, Phi_prev=Phi0,
         eta_curr=eta1, delta_curr=delta1, Phi_curr=Phi1,
         U_curr=U0, V_curr=V0,
-
         Am_curr=Am1, Bm_curr=Bm1, Cm_curr=Cm1, Dm_curr=Dm1, Em_curr=Em1,
         PhiFm_curr=PhiFm1, Fm_curr=Fm1, Gm_curr=Gm1,
-
         dead=jnp.array(False),
     )
 
@@ -354,49 +318,31 @@ def _init_state_from_fields(
     delta: jnp.ndarray,
     Phi: jnp.ndarray,
     test: Optional[int],
-    a1: float,
     taurad: float,
     taudrag: float,
 ) -> State:
-    """Initialize the model state from provided physical fields (restart/continuation).
-
-    This mirrors the legacy continuation behavior: prev == curr for all leapfrog levels.
-    Winds are reconstructed from (eta, delta) in spectral space, and nonlinear/forcing
-    terms are recomputed consistently.
-    """
+    """Initialize the model state from provided physical fields (restart/continuation)."""
     I, J, M, N = static.I, static.J, static.M, static.N
 
     eta0 = jnp.asarray(eta, dtype=jnp.float64)
     delta0 = jnp.asarray(delta, dtype=jnp.float64)
     Phi0 = jnp.asarray(Phi, dtype=jnp.float64)
 
-    # Fourier (mu,m) coefficients
     etam0 = st.fwd_fft_trunc(eta0, I, M)
     deltam0 = st.fwd_fft_trunc(delta0, I, M)
     Phim0 = st.fwd_fft_trunc(Phi0, I, M)
 
-    # (m,n) spectral coefficients for wind inversion
-    # FIXED: Correct parameter order - Pmn before w
     etamn0 = st.fwd_leg(etam0, J, M, N, static.Pmn, static.w)
     deltamn0 = st.fwd_leg(deltam0, J, M, N, static.Pmn, static.w)
 
     U0_c, V0_c = st.invrsUV(
-        deltamn0,
-        etamn0,
-        static.fmn,
-        I,
-        J,
-        M,
-        N,
-        static.Pmn,
-        static.Hmn,
-        static.tstepcoeffmn,
-        static.marray,
+        deltamn0, etamn0, static.fmn,
+        I, J, M, N,
+        static.Pmn, static.Hmn, static.tstepcoeffmn, static.marray,
     )
     U0 = jnp.real(U0_c)
     V0 = jnp.real(V0_c)
 
-    # Nonlinear terms at curr
     A1, B1, C1, D1, E1 = initial_conditions.ABCDE_init(U0, V0, eta0, Phi0, static.mus, I, J)
     Am1 = st.fwd_fft_trunc(A1, I, M)
     Bm1 = st.fwd_fft_trunc(B1, I, M)
@@ -420,14 +366,11 @@ def _init_state_from_fields(
         etam_prev=etam0, etam_curr=etam0,
         deltam_prev=deltam0, deltam_curr=deltam0,
         Phim_prev=Phim0, Phim_curr=Phim0,
-
         eta_prev=eta0, delta_prev=delta0, Phi_prev=Phi0,
         eta_curr=eta0, delta_curr=delta0, Phi_curr=Phi0,
         U_curr=U0, V_curr=V0,
-
         Am_curr=Am1, Bm_curr=Bm1, Cm_curr=Cm1, Dm_curr=Dm1, Em_curr=Em1,
         PhiFm_curr=PhiFm1, Fm_curr=Fm1, Gm_curr=Gm1,
-
         dead=jnp.array(False),
     )
 
@@ -459,15 +402,10 @@ def _step_once(
 
     def skip_update(_):
         out = dict(
-            rms=rms,
-            spin_min=spin_min,
-            phi_min=phi_min,
-            phi_max=phi_max,
-            eta=state.eta_curr,
-            delta=state.delta_curr,
-            Phi=state.Phi_curr,
-            U=state.U_curr,
-            V=state.V_curr,
+            rms=rms, spin_min=spin_min,
+            phi_min=phi_min, phi_max=phi_max,
+            eta=state.eta_curr, delta=state.delta_curr, Phi=state.Phi_curr,
+            U=state.U_curr, V=state.V_curr,
         )
         new_state = State(
             etam_prev=state.etam_prev, etam_curr=state.etam_curr,
@@ -476,60 +414,34 @@ def _step_once(
             eta_prev=state.eta_prev, delta_prev=state.delta_prev, Phi_prev=state.Phi_prev,
             eta_curr=state.eta_curr, delta_curr=state.delta_curr, Phi_curr=state.Phi_curr,
             U_curr=state.U_curr, V_curr=state.V_curr,
-            Am_curr=state.Am_curr, Bm_curr=state.Bm_curr, Cm_curr=state.Cm_curr, Dm_curr=state.Dm_curr, Em_curr=state.Em_curr,
+            Am_curr=state.Am_curr, Bm_curr=state.Bm_curr, Cm_curr=state.Cm_curr,
+            Dm_curr=state.Dm_curr, Em_curr=state.Em_curr,
             PhiFm_curr=state.PhiFm_curr, Fm_curr=state.Fm_curr, Gm_curr=state.Gm_curr,
             dead=dead_next,
         )
         return new_state, out
 
     def do_update(_):
-        # Fourier winds used inside the tdiff expressions
         Um = st.fwd_fft_trunc(state.U_curr, I, M)
         Vm = st.fwd_fft_trunc(state.V_curr, I, M)
 
         newetamn, neweta_c, newdeltamn, newdelta_c, newPhimn, newPhi_c, newU_c, newV_c = time_stepping.tstepping(
-            state.etam_prev,
-            state.etam_curr,
-            state.deltam_prev,
-            state.deltam_curr,
-            state.Phim_prev,
-            state.Phim_curr,
-            I,
-            J,
-            M,
-            N,
-            state.Am_curr,
-            state.Bm_curr,
-            state.Cm_curr,
-            state.Dm_curr,
-            state.Em_curr,
-            state.Fm_curr,
-            state.Gm_curr,
-            Um,
-            Vm,
-            static.fmn,
-            static.Pmn,
-            static.Hmn,
-            static.w,
-            static.tstepcoeff,
-            static.tstepcoeff2,
-            static.tstepcoeffmn,
-            static.marray,
-            static.mJarray,
-            static.narray,
-            state.PhiFm_curr,   # Fourier forcing
-            static.dt,
-            static.a,
-            static.Phibar,
-            taurad,
-            taudrag,
-            flags.forcflag,
-            flags.diffflag,
-            flags.expflag,
-            static.sigma,
-            static.sigmaPhi,
-            test,
-            t,
+            state.etam_prev, state.etam_curr,
+            state.deltam_prev, state.deltam_curr,
+            state.Phim_prev, state.Phim_curr,
+            I, J, M, N,
+            state.Am_curr, state.Bm_curr, state.Cm_curr, state.Dm_curr, state.Em_curr,
+            state.Fm_curr, state.Gm_curr,
+            Um, Vm,
+            static.fmn, static.Pmn, static.Hmn, static.w,
+            static.tstepcoeff, static.tstepcoeff2, static.tstepcoeffmn,
+            static.marray, static.mJarray, static.narray,
+            state.PhiFm_curr,
+            static.dt, static.a, static.Phibar,
+            taurad, taudrag,
+            flags.forcflag, flags.diffflag, flags.expflag,
+            static.sigma, static.sigmaPhi,
+            test, t,
         )
 
         neweta = jnp.real(neweta_c)
@@ -538,19 +450,17 @@ def _step_once(
         newU = jnp.real(newU_c)
         newV = jnp.real(newV_c)
 
-        # Test-1 override for winds (matches legacy behavior)
         if test == 1:
             SU0, sina, cosa, _etaamp, _Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
             Uic, Vic = initial_conditions.velocity_init(I, J, SU0, cosa, sina, static.mus, static.lambdas, test)
             newU = Uic
             newV = Vic
 
-        # Update forcing at next time level
+        # Update forcing
         if test is None:
             Q2 = forcing.Qfun(static.Phieq, newPhi, static.Phibar, taurad)
-            PhiF2 = Q2
             F2, G2 = forcing.Rfun(newU, newV, Q2, newPhi, static.Phibar, taudrag)
-            PhiFm2 = st.fwd_fft_trunc(PhiF2, I, M)
+            PhiFm2 = st.fwd_fft_trunc(Q2, I, M)
             Fm2 = st.fwd_fft_trunc(F2, I, M)
             Gm2 = st.fwd_fft_trunc(G2, I, M)
         else:
@@ -558,7 +468,7 @@ def _step_once(
             Fm2 = state.Fm_curr
             Gm2 = state.Gm_curr
 
-        # Nonlinear terms at next time level
+        # Nonlinear terms
         A2, B2, C2, D2, E2 = initial_conditions.ABCDE_init(newU, newV, neweta, newPhi, static.mus, I, J)
         Am2 = st.fwd_fft_trunc(A2, I, M)
         Bm2 = st.fwd_fft_trunc(B2, I, M)
@@ -566,29 +476,24 @@ def _step_once(
         Dm2 = st.fwd_fft_trunc(D2, I, M)
         Em2 = st.fwd_fft_trunc(E2, I, M)
 
-        # Decide whether to apply Robert-Asselin filter to the middle level (curr)
+        # Robert-Asselin filter
         do_ra = jnp.logical_and(jnp.array(flags.modalflag), t > 2)
 
         def apply_ra(_):
-            # Legacy behavior: Robert-Asselin filtering is applied in physical space to the
-            # middle time level, but the original SWAMPE code does NOT recompute the
-            # corresponding Fourier coefficients used for the next dynamical step.
-            eta_f = _ra_filter(state.eta_prev, state.eta_curr, neweta, flags.alpha)
-            delta_f = _ra_filter(state.delta_prev, state.delta_curr, newdelta, flags.alpha)
-            Phi_f = _ra_filter(state.Phi_prev, state.Phi_curr, newPhi, flags.alpha)
-            return eta_f, delta_f, Phi_f
+            return (
+                _ra_filter(state.eta_prev, state.eta_curr, neweta, flags.alpha),
+                _ra_filter(state.delta_prev, state.delta_curr, newdelta, flags.alpha),
+                _ra_filter(state.Phi_prev, state.Phi_curr, newPhi, flags.alpha),
+            )
 
         def no_ra(_):
             return state.eta_curr, state.delta_curr, state.Phi_curr
 
         eta_mid, delta_mid, Phi_mid = jax.lax.cond(do_ra, apply_ra, no_ra, operand=None)
 
-        # Legacy geopotential diagnostics use the (possibly filtered) middle level.
-        phi_min = jnp.min(Phi_mid)
-        phi_max = jnp.max(Phi_mid)
+        phi_min_out = jnp.min(Phi_mid)
+        phi_max_out = jnp.max(Phi_mid)
 
-        # Next iteration prev spectral fields become the unfiltered current spectral fields
-        # (matching legacy SWAMPE, which does not update Fourier coeffs after RA filtering).
         new_state = State(
             etam_prev=state.etam_curr,
             etam_curr=st.fwd_fft_trunc(neweta, I, M),
@@ -596,39 +501,19 @@ def _step_once(
             deltam_curr=st.fwd_fft_trunc(newdelta, I, M),
             Phim_prev=state.Phim_curr,
             Phim_curr=st.fwd_fft_trunc(newPhi, I, M),
-
-            eta_prev=eta_mid,
-            delta_prev=delta_mid,
-            Phi_prev=Phi_mid,
-            eta_curr=neweta,
-            delta_curr=newdelta,
-            Phi_curr=newPhi,
-            U_curr=newU,
-            V_curr=newV,
-
-            Am_curr=Am2,
-            Bm_curr=Bm2,
-            Cm_curr=Cm2,
-            Dm_curr=Dm2,
-            Em_curr=Em2,
-
-            PhiFm_curr=PhiFm2,
-            Fm_curr=Fm2,
-            Gm_curr=Gm2,
-
+            eta_prev=eta_mid, delta_prev=delta_mid, Phi_prev=Phi_mid,
+            eta_curr=neweta, delta_curr=newdelta, Phi_curr=newPhi,
+            U_curr=newU, V_curr=newV,
+            Am_curr=Am2, Bm_curr=Bm2, Cm_curr=Cm2, Dm_curr=Dm2, Em_curr=Em2,
+            PhiFm_curr=PhiFm2, Fm_curr=Fm2, Gm_curr=Gm2,
             dead=dead_next,
         )
 
         out = dict(
-            rms=rms,
-            spin_min=spin_min,
-            phi_min=phi_min,
-            phi_max=phi_max,
-            eta=neweta,
-            delta=newdelta,
-            Phi=newPhi,
-            U=newU,
-            V=newV,
+            rms=rms, spin_min=spin_min,
+            phi_min=phi_min_out, phi_max=phi_max_out,
+            eta=neweta, delta=newdelta, Phi=newPhi,
+            U=newU, V=newV,
         )
         return new_state, out
 
@@ -661,34 +546,14 @@ def run_model_scan(
     starttime: int = 2,
     state0: Optional[State] = None,
 ) -> Dict[str, jnp.ndarray]:
-    """Run the model in a way compatible with end-to-end differentiation.
+    """Run the model via jax.lax.scan — fully differentiable, no side effects.
 
-    Parameters
-    ----------
-    tmax : int
-        Total number of time steps.
-    starttime : int
-        Time index at which to begin stepping (legacy uses 2).
-    state0 : State, optional
-        Initial state (e.g., for continuation). If provided, it must be
-        consistent with the same static configuration (M, dt, etc.).
-
-    Returns
-    -------
-    dict
-        Dictionary containing eta, delta, Phi, U, V time series and diagnostics.
+    Returns a dict with keys: eta, delta, Phi, U, V, spinup, geopot, lambdas, mus.
+    Each field array has shape (tmax - starttime, J, I).
     """
     static = build_static(
-        M=M,
-        dt=dt,
-        a=a,
-        omega=omega,
-        g=g,
-        Phibar=Phibar,
-        K6=K6,
-        K6Phi=K6Phi,
-        DPhieq=DPhieq,
-        test=test,
+        M=M, dt=dt, a=a, omega=omega, g=g, Phibar=Phibar,
+        K6=K6, K6Phi=K6Phi, DPhieq=DPhieq, test=test,
         use_scipy_basis=use_scipy_basis,
     )
 
@@ -699,28 +564,19 @@ def run_model_scan(
     ts = jnp.arange(int(starttime), int(starttime) + steps, dtype=jnp.int32)
 
     def body(carry: State, t: jnp.ndarray):
-        s2, out = _step_once(carry, t, static, flags, taurad, taudrag, test, a1)
-        return s2, out
+        return _step_once(carry, t, static, flags, taurad, taudrag, test, a1)
 
     body_fn = jax.jit(body) if jit else body
     _final_state, outs = jax.lax.scan(body_fn, state0, ts)
 
-    eta = outs["eta"]
-    delta = outs["delta"]
-    Phi = outs["Phi"]
-    U = outs["U"]
-    V = outs["V"]
-    spinup = jnp.stack([outs["spin_min"], outs["rms"]], axis=1)
-    geopot = jnp.stack([outs["phi_min"], outs["phi_max"]], axis=1)
-
     return dict(
-        eta=eta,
-        delta=delta,
-        Phi=Phi,
-        U=U,
-        V=V,
-        spinup=spinup,
-        geopot=geopot,
+        eta=outs["eta"],
+        delta=outs["delta"],
+        Phi=outs["Phi"],
+        U=outs["U"],
+        V=outs["V"],
+        spinup=jnp.stack([outs["spin_min"], outs["rms"]], axis=1),
+        geopot=jnp.stack([outs["phi_min"], outs["phi_max"]], axis=1),
         lambdas=static.lambdas,
         mus=static.mus,
     )
@@ -734,233 +590,66 @@ def run_model(
     omega: float,
     a: float,
     test: Optional[int] = None,
-    g: float = 9.8,
-    forcflag: bool = True,
-    taurad: float = 86400.0,
-    taudrag: float = 86400.0,
-    DPhieq: float = 4.0e6,
-    a1: float = 0.05,
-    plotflag: bool = True,
-    plotfreq: int = 5,
-    minlevel: Optional[float] = None,
-    maxlevel: Optional[float] = None,
-    diffflag: bool = True,
-    modalflag: bool = True,
-    alpha: float = 0.01,
-    contflag: bool = False,
-    saveflag: bool = True,
-    expflag: bool = False,
-    savefreq: int = 150,
-    K6: float = 1.24e33,
-    custompath: Optional[str] = None,
-    contTime: Optional[object] = None,
-    timeunits: str = "hours",
-    verbose: bool = True,
-    *,
-    K6Phi: Optional[float] = None,
-    use_scipy_basis: bool = True,
+    **kwargs,
 ):
-    """SWAMPE-compatible wrapper around the differentiable JAX core.
+    """SWAMPE-compatible wrapper — NOT IMPLEMENTED.
 
-    This wrapper preserves the original SWAMPE numpy API (see SWAMPE/model.py):
-      - W92/JH93 tests 1 and 2, and a forced mode when test is None.
-      - optional radiative + drag forcing (forcflag) for forced mode.
-      - optional diffusion/hyperviscosity (diffflag).
-      - optional modal splitting (modalflag/alpha).
-      - continuation (restart) from pickled fields (contflag/contTime/custompath).
-      - periodic saving (saveflag/savefreq) and optional plotting (plotflag/plotfreq).
+    This function preserves the original SWAMPE ``model.run_model()`` call
+    signature but does not work. It exists solely so that import-time
+    references (e.g. ``from .model import run_model``) don't break.
 
-    Notes
-    -----
-    * For fully differentiable execution (no I/O), prefer `run_model_scan(...)`.
-    * This wrapper may transfer arrays back to host memory when saving/plotting.
+    Why it doesn't work
+    -------------------
+    The original SWAMPE ``run_model()`` interleaves JAX computation with
+    Python-side I/O at every time step:
+
+    * **Periodic checkpointing** — pickling (eta, delta, Phi, U, V) to disk
+      every ``savefreq`` steps so a crashed run can be resumed.
+    * **Periodic plotting** — generating matplotlib figures every ``plotfreq``
+      steps during the run.
+    * **Continuation / restart** — loading a previous pickle checkpoint via
+      ``contflag=True`` and resuming the time loop from that point.
+
+    These I/O side effects require a Python-level ``for`` loop (not
+    ``jax.lax.scan``), and the variables that controlled the branching between
+    the scan path and the Python-loop path (``wants_periodic``, ``out_dir``)
+    were never defined — so the function crashes with ``NameError`` before
+    doing any computation.
+
+    What to use instead
+    -------------------
+    * For **differentiable / JIT-compiled runs**, call ``run_model_scan(...)``
+      directly.  It accepts an optional ``state0`` argument for continuation.
+
+    * For **periodic saving**, run ``run_model_scan`` in chunks::
+
+          state = None
+          for chunk_start in range(2, tmax, chunk_size):
+              out = run_model_scan(
+                  tmax=min(chunk_start + chunk_size, tmax),
+                  starttime=chunk_start,
+                  state0=state,
+                  ...
+              )
+              save_checkpoint(out)  # your own I/O
+              state = ...           # reconstruct State from out
+
+    * For **plotting**, pull fields out of the returned dict and plot after
+      the run completes, or use the chunked approach above.
+
+    Raises
+    ------
+    NotImplementedError
+        Always.
     """
-    import os
-    from pathlib import Path
-
-    import numpy as np
-
-    from . import plotting  # optional matplotlib dependency
-
-    K6Phi_eff = float(K6) if K6Phi is None else float(K6Phi)
-
-    flags = RunFlags(
-        forcflag=bool(forcflag),
-        diffflag=bool(diffflag),
-        expflag=bool(expflag),
-        modalflag=bool(modalflag),
-        alpha=float(alpha),
+    raise NotImplementedError(
+        "run_model() is not functional in this JAX port.\n"
+        "\n"
+        "The legacy SWAMPE wrapper requires a Python-level time loop with periodic\n"
+        "disk I/O (checkpointing, plotting, continuation), but the variables that\n"
+        "controlled this path ('wants_periodic', 'out_dir') were never defined.\n"
+        "\n"
+        "Use run_model_scan(...) instead for the differentiable / JIT-compiled path.\n"
+        "See the docstring of this function for a chunked-save pattern if you need\n"
+        "periodic checkpointing."
     )
-
-    static = build_static(
-        M=int(M),
-        dt=float(dt),
-        a=float(a),
-        omega=float(omega),
-        g=float(g),
-        Phibar=float(Phibar),
-        K6=float(K6),
-        K6Phi=K6Phi_eff,
-        DPhieq=float(DPhieq),
-        test=test,
-        use_scipy_basis=use_scipy_basis,
-    )
-
-    starttime = 2
-    state = None
-
-    if contflag:
-        if contTime is None:
-            raise ValueError("contflag=True requires contTime to be provided.")
-        # Legacy behavior (consistent with SWAMPE initialization): start at t_from_timestamp + 2,
-        # and set prev == curr from saved fields.
-        try:
-            t_restart = continuation.compute_t_from_timestamp(timeunits, int(contTime), float(dt))
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"Invalid contTime={contTime!r} for units={timeunits!r}") from exc
-        # Legacy SWAMPE behavior: restart snapshot is used for both prev/curr time levels.
-        # The leapfrog-style scheme then starts advancing at t = t_restart.
-        starttime = int(t_restart)
-
-        eta0, delta0, Phi0, _U0, _V0 = continuation.load_data(str(contTime), custompath=custompath)
-        state = _init_state_from_fields(
-            static,
-            eta=jnp.asarray(eta0),
-            delta=jnp.asarray(delta0),
-            Phi=jnp.asarray(Phi0),
-            test=test,
-            a1=float(a1),
-            taurad=float(taurad),
-            taudrag=float(taudrag),
-        )
-    # Note: match legacy SWAMPE behavior: plotting does not create output directories.
-    # Data directories are created lazily by continuation.write_pickle() when saving.
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-    if not wants_periodic:
-        out = run_model_scan(
-            tmax=int(tmax),
-            M=int(M),
-            dt=float(dt),
-            a=float(a),
-            omega=float(omega),
-            g=float(g),
-            Phibar=float(Phibar),
-            taurad=float(taurad),
-            taudrag=float(taudrag),
-            K6=float(K6),
-            K6Phi=K6Phi_eff,
-            DPhieq=float(DPhieq),
-            test=test,
-            a1=float(a1),
-            flags=flags,
-            use_scipy_basis=use_scipy_basis,
-            jit=True,
-            starttime=int(starttime),
-            state0=state,
-        )
-
-        if saveflag:
-            tmax_i = int(tmax)
-            timestamp = continuation.compute_timestamp(timeunits, tmax_i - 1, float(dt))
-            continuation.save_data(
-                timestamp,
-                np.asarray(out["eta"][-1]),
-                np.asarray(out["delta"][-1]),
-                np.asarray(out["Phi"][-1]),
-                np.asarray(out["U"][-1]),
-                np.asarray(out["V"][-1]),
-                np.asarray(out["spinup"]),
-                np.asarray(out["geopot"]),
-                custompath=str(out_dir) + os.sep,
-            )
-
-        if verbose:
-            print("GCM run completed!")
-        return out
-
-    # Periodic I/O path (memory-light). We do not accumulate full field history.
-    step_fn = jax.jit(
-        lambda s, t: _step_once(s, t, static, flags, float(taurad), float(taudrag), test, float(a1))
-    )
-
-    # Initialize state if we did not load from continuation.
-    if state is None:
-        state = _init_state(static, test=test, a1=float(a1), taurad=float(taurad), taudrag=float(taudrag))
-
-    spinup_rows: list[tuple[float, float]] = []
-    geopot_rows: list[tuple[float, float]] = []
-
-    last_fields = None
-
-    tmax_i = int(tmax)
-    for t in range(int(starttime), tmax_i):
-        state, out_t = step_fn(state, jnp.asarray(t, dtype=jnp.int32))
-        # Only scalars are pulled back each step to build spinup/geopot series.
-        spinup_rows.append((float(out_t["spin_min"]), float(out_t["rms"])))
-        geopot_rows.append((float(out_t["phi_min"]), float(out_t["phi_max"])))
-        last_fields = out_t
-
-        do_save = saveflag and savefreq > 0 and (t % savefreq == 0)
-        do_plot = plotflag and plotfreq > 0 and (t % plotfreq == 0)
-
-        if do_save or do_plot:
-            ts = continuation.compute_timestamp(timeunits, t, float(dt))
-
-        if do_save:
-            continuation.save_data(
-                ts,
-                np.asarray(out_t["eta"]),
-                np.asarray(out_t["delta"]),
-                np.asarray(out_t["Phi"]),
-                np.asarray(out_t["U"]),
-                np.asarray(out_t["V"]),
-                np.asarray(spinup_rows, dtype=np.float64),
-                np.asarray(geopot_rows, dtype=np.float64),
-                custompath=custompath,
-            )
-
-        if do_plot:
-            # Match legacy SWAMPE: generate figures (interactive) and let plotting.py decide about saving.
-            plotting.mean_zonal_wind_plot(
-                np.asarray(out_t["U"]),
-                np.asarray(static.mus),
-                ts,
-                units=timeunits,
-            )
-            plotting.quiver_geopot_plot(
-                np.asarray(out_t["U"]),
-                np.asarray(out_t["V"]),
-                np.asarray(out_t["Phi"] + float(Phibar)),
-                np.asarray(static.lambdas),
-                np.asarray(static.mus),
-                ts,
-                units=timeunits,
-                minlevel=minlevel,
-                maxlevel=maxlevel,
-            )
-            plotting.spinup_plot(
-                np.asarray(spinup_rows, dtype=np.float64),
-                float(dt),
-                units=timeunits,
-            )
-
-    # Assemble minimal output payload.
-    spinup = np.asarray(spinup_rows, dtype=np.float64)
-    geopot = np.asarray(geopot_rows, dtype=np.float64)
-
-    out = dict(
-        eta=jnp.asarray(last_fields["eta"]) if last_fields is not None else jnp.zeros((static.J, static.I)),
-        delta=jnp.asarray(last_fields["delta"]) if last_fields is not None else jnp.zeros((static.J, static.I)),
-        Phi=jnp.asarray(last_fields["Phi"]) if last_fields is not None else jnp.zeros((static.J, static.I)),
-        U=jnp.asarray(last_fields["U"]) if last_fields is not None else jnp.zeros((static.J, static.I)),
-        V=jnp.asarray(last_fields["V"]) if last_fields is not None else jnp.zeros((static.J, static.I)),
-        spinup=jnp.asarray(spinup),
-        geopot=jnp.asarray(geopot),
-        lambdas=static.lambdas,
-        mus=static.mus,
-    )
-
-    if verbose:
-        print("GCM run completed!")
-    return out
