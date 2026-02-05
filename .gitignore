@@ -1,5 +1,115 @@
-# Python bytecode / cache
+# === OS / editor noise ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# === Python bytecode / caches ===
 __pycache__/
-**/__pycache__/
 *.py[cod]
-*$py.class
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# === Build / packaging ===
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.whl
+
+# === Virtualenv / conda (don’t commit envs) ===
+.venv/
+venv/
+ENV/
+env/
+.conda/
+conda-env/
+# (If you ever create envs in-repo)
+envs/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Logs / outputs ===
+*.log
+logs/
+outputs/
+out/
+tmp/
+temp/
+*.tmp
+plots/
+
+# === Figures / renders (if generated) ===
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.mp4
+*.gif
+
+# === Data / large artifacts (don’t commit) ===
+data/
+datasets/
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.nc
+*.zarr/
+*.pkl
+*.pickle
+
+# === Model / run artifacts ===
+runs/
+checkpoints/
+ckpt/
+*.ckpt
+
+# === JAX / XLA artifacts ===
+xla_dump/
+xla_dump_*/
+xla/
+xla_cache/
+jax_cache/
+.cache/
+.jax/
+.jax_cache/
+# Some folks dump here; ignore generally
+/tmp/
+
+# === Test artifacts ===
+test-results/
+reports/
+
+# === Local config overrides (keep templates, ignore secrets/local) ===
+.env
+.env.*
+*.local
+config.local.*
+local_config.*
+secrets.*
+**/secrets.*
+
+# === Archives ===
+*.zip
+*.tar
+*.tar.gz
+*.tgz

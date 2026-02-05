@@ -1,40 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Unit tests for a SWAMPE JAX port, adapted for a src/ + tests/ repository layout.
+test_unit.py
 
-Expected layout:
+Unit tests for the MY_SWAMP (JAX) port.
+
+Expected repo layout:
 
 repo/
-  src/        # either:
-             #   (A) flat modules: spectral_transform.py, initial_conditions.py, ...
-             #   (B) a package dir: <pkg>/spectral_transform.py, ...
-  tests/
+  src/
+    my_swamp/
+      __init__.py
+      spectral_transform.py
+      initial_conditions.py
+      time_stepping.py
+      ...
+  testing/
     test_unit.py   (this file)
 
-This file can be run either with pytest or directly:
+Run:
+  python testing/test_unit.py
   pytest -q
-  python tests/test_unit.py
-  (or from tests/: python test_unit.py)
-
-Import resolution:
-- Prefer SWAMPE_JAX_PKG if set (base package name under src/).
-- Otherwise, auto-detect by scanning src/ for packages and trying a few common names.
-- Finally, fall back to importing flat modules from src/.
 """
 
 from __future__ import annotations
 
-import importlib
-import os
 import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 from jax import config as _jax_config
 
-# IMPORTANT: enable 64-bit mode before importing modules that import jax.numpy.
+# Enable 64-bit *before* importing modules that import jax.numpy.
 _jax_config.update("jax_enable_x64", True)
 
 
@@ -42,95 +38,28 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _ensure_src_on_path() -> Path:
+def _ensure_src_on_path_for_dev() -> None:
+    """
+    Editable install (pip install -e .) is the preferred setup.
+
+    This fallback makes `python testing/test_unit.py` work even if you haven't
+    installed the package yet.
+    """
     src = _repo_root() / "src"
-    if not src.is_dir():
-        raise RuntimeError(f"Expected src/ directory at: {src}")
-    if str(src) not in sys.path:
+    if src.is_dir() and str(src) not in sys.path:
         sys.path.insert(0, str(src))
-    return src
 
 
-def _iter_src_packages(src: Path) -> List[str]:
-    pkgs: List[str] = []
-    for p in sorted(src.iterdir()):
-        if p.is_dir() and (p / "__init__.py").is_file():
-            pkgs.append(p.name)
-    return pkgs
-
-
-def _name_variants(name: str) -> List[str]:
-    # Generate a few plausible importable variants from a repo dir name.
-    n0 = name.strip()
-    n1 = n0.replace("-", "_").replace(" ", "_")
-    variants = {n0, n1, n1.lower(), n1.upper()}
-    # Avoid empty / invalid
-    return [v for v in variants if v and v[0].isalpha()]
-
-
-def _import_from_base(base: str, module: str) -> ModuleType:
-    return importlib.import_module(module if base == "" else f"{base}.{module}")
-
-
-def _looks_like_jax_impl(mod: ModuleType) -> bool:
-    # Heuristic: most JAX ports have jax/jnp in module globals, and/or a file path with "jax".
-    d = getattr(mod, "__dict__", {})
-    if "jnp" in d or "jax" in d:
-        return True
-    path = (getattr(mod, "__file__", "") or "").lower()
-    return "jax" in path
-
-
-def _resolve_jax_base(required: Sequence[str]) -> str:
-    src = _ensure_src_on_path()
-
-    env = os.environ.get("SWAMPE_JAX_PKG")
-    candidates: List[str] = []
-    if env:
-        candidates.append(env)
-
-    # common names + repo-derived names + discovered packages
-    candidates += ["swampe_jax", "swampe", "JAX"]
-    candidates += _name_variants(_repo_root().name)
-    candidates += _iter_src_packages(src)
-
-    # Allow importing as flat modules from src/
-    candidates.append("")
-
-    last_err: Exception | None = None
-    for base in candidates:
-        try:
-            st = _import_from_base(base, required[0])
-            if not _looks_like_jax_impl(st):
-                # If this resolves to a NumPy implementation, skip it.
-                continue
-            # validate the rest exist
-            for mod in required[1:]:
-                _import_from_base(base, mod)
-            return base
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            continue
-
-    msg = (
-        "Could not import JAX SWAMPE port.\n"
-        f"  Tried SWAMPE_JAX_PKG={env!r} and candidates={candidates!r}\n"
-        "  Expected to find modules: " + ", ".join(required) + "\n"
-        "If your code is a package under src/<pkg>/..., set SWAMPE_JAX_PKG=<pkg>.\n"
-        "If your code is flat modules directly under src/, ensure src/ contains those .py files."
-    )
-    raise ModuleNotFoundError(msg) from last_err
-
-
-def _import_jax_port_modules() -> Tuple[ModuleType, ModuleType, ModuleType]:
-    base = _resolve_jax_base(["spectral_transform", "initial_conditions", "time_stepping"])
-    st = _import_from_base(base, "spectral_transform")
-    ic = _import_from_base(base, "initial_conditions")
-    tstep = _import_from_base(base, "time_stepping")
-    return st, ic, tstep
-
-
-st, ic, tstep = _import_jax_port_modules()
+# Import MY_SWAMP modules (package import name is `my_swamp`)
+try:
+    import my_swamp.initial_conditions as ic  # noqa: E402
+    import my_swamp.spectral_transform as st  # noqa: E402
+    import my_swamp.time_stepping as tstep  # noqa: E402
+except ModuleNotFoundError:
+    _ensure_src_on_path_for_dev()
+    import my_swamp.initial_conditions as ic  # type: ignore[no-redef]  # noqa: E402
+    import my_swamp.spectral_transform as st  # type: ignore[no-redef]  # noqa: E402
+    import my_swamp.time_stepping as tstep  # type: ignore[no-redef]  # noqa: E402
 
 
 def _np(a) -> np.ndarray:
@@ -289,7 +218,6 @@ def test_vorticity_divergence_transform() -> None:
 
 
 def _run_as_script() -> int:
-    # Minimal runner for "python tests/test_unit.py" without requiring pytest.
     tests = [name for name in globals() if name.startswith("test_")]
     failures = 0
     for name in sorted(tests):
