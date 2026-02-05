@@ -118,7 +118,6 @@ class Static:
 @dataclass(frozen=True)
 class State:
     """Two-level (prev/curr) spectral+physical state for leapfrog-style stepping."""
-
     # Fourier coefficients at t-1 and t (J, M+1)
     etam_prev: jnp.ndarray
     etam_curr: jnp.ndarray
@@ -376,7 +375,6 @@ def _init_state_from_fields(
     Phim0 = st.fwd_fft_trunc(Phi0, I, M)
 
     # (m,n) spectral coefficients for wind inversion
-    # FIXED: Correct parameter order - Pmn before w
     etamn0 = st.fwd_leg(etam0, J, M, N, static.Pmn, static.w)
     deltamn0 = st.fwd_leg(deltam0, J, M, N, static.Pmn, static.w)
 

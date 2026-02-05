@@ -1,8 +1,5 @@
 """
-FIXED: Spectral transform module for JAX-based SWAMPE.
-
-Critical fix: invrs_leg now correctly sums only over n >= m (triangular region),
-matching the original numpy implementation exactly.
+Spectral transform module for JAX-based SWAMPE.
 """
 from __future__ import annotations
 
@@ -236,9 +233,6 @@ def fwd_fft_trunc(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
 
 def invrs_leg(legcoeff: jnp.ndarray, I: int, J: int, M: int, N: int, Pmn: jnp.ndarray) -> jnp.ndarray:
     """Inverse Legendre transform: spectral (m,n) -> full Fourier coeffs (J, I).
-    
-    CRITICAL FIX: This function now correctly sums only over n >= m,
-    matching the original numpy implementation exactly.
     
     Parameters
     ----------

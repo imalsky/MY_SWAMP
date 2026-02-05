@@ -1,5 +1,5 @@
 """
-CORRECTED: This module contains the functions used for the evaluation of stellar forcing (insolation).
+This module contains the functions used for the evaluation of stellar forcing (insolation).
 Matches the original SWAMPE numpy implementation exactly.
 """
 from __future__ import annotations
@@ -18,8 +18,6 @@ def Phieqfun(
 ) -> jnp.ndarray:
     """
     Evaluates the equilibrium geopotential from Perez-Becker and Showman (2013).
-    
-    CORRECTED: Matches original numpy implementation exactly.
     """
     lam = lambdas[None, :]  # (1, I)
     mu = mus[:, None]       # (J, 1)
@@ -86,7 +84,7 @@ def Rfun(
     """
     Evaluates the velocity forcing in Perez-Becker and Showman.
     
-    CORRECTED: Includes Q<0 handling and taudrag==-1 case from original.
+    Includes Q<0 handling and taudrag==-1 case from original.
     """
     # Clone Q and zero out negative values (mass loss prevention)
     Qclone = jnp.where(Q < 0, 0.0, Q)

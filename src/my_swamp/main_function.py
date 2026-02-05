@@ -10,18 +10,6 @@ Design goals
 
 2) Delegate the actual numerical work to the JAX rewrite's `model.run_model(...)`
    so the differentiable core remains in one place.
-
-Notes
------
-- The upstream SWAMPE repository historically contained two entry points:
-    * `model.run_model(...)` (the maintained driver; supports test 1/2 and forced mode)
-    * `main_function.main(...)` (older driver that referenced extra tests/params)
-  In the SWAMPE zip you provided, `model.run_model(...)` only implements tests 1/2
-  and forced mode (test=None). This wrapper mirrors that: it *accepts* the legacy
-  parameters for API compatibility, but does not implement legacy-only tests.
-
-- Plotting is intentionally not a focus here (per your request). The plot flags
-  are still forwarded so the downstream model wrapper can decide what to do.
 """
 
 from __future__ import annotations

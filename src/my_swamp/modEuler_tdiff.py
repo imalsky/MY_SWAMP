@@ -12,7 +12,14 @@ from . import filters
 
 
 ## PHI tstep
-def phi_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFm,dt,a,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
+def phi_timestep(etam0,etam1,deltam0,
+                 deltam1,Phim0,Phim1,
+                 I,J,M,N,Am,Bm,Cm,
+                 Dm,Em,Fm,Gm,Um,Vm,
+                 Pmn,Hmn,w,tstepcoeff1,
+                 tstepcoeff2,mJarray,narray,
+                 PhiFm,dt,a,Phibar,taurad,
+                 taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
     """This function timesteps the geopotential Phi forward.
 
     :param etam0: Fourier coefficents of absolute vorticity for one time step
@@ -56,7 +63,7 @@ def phi_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,
     :type fmn: array of float
     :param Pmn: associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
     :type Pmn: array of float
-    :param Hmn: derivatives of the associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
+    :param Hmn: derivatives of the legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
     :type Hmn: array of float
     :param w: Gauss Legendre weights
     :type w: array of float
@@ -425,24 +432,15 @@ def delta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,E
         deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
         
         deltacomp5=jnp.multiply(narray,deltacomp5)
-        
-    
-        
+
         Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
         Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
-    
-    
+
         Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
         Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
-    
-     
-        deltamntstep=deltacomp1+deltacomp2+deltacomp3+deltacomp4+deltacomp5+jnp.multiply(narray,(Phicomp2+Phicomp3)/2)/a**2-Phibar*jnp.multiply(narray,deltacomp1)/a**2
-   
- 
-        
-        
 
-    
+        deltamntstep=deltacomp1+deltacomp2+deltacomp3+deltacomp4+deltacomp5+jnp.multiply(narray,(Phicomp2+Phicomp3)/2)/a**2-Phibar*jnp.multiply(narray,deltacomp1)/a**2
+
     if diffflag==True:
         deltamntstep=filters.diffusion(deltamntstep, sigma)
 

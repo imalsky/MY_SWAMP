@@ -1,6 +1,6 @@
 """
-CORRECTED: This module contains the functions associated with filters needed for numerical stability.
-Matches the original SWAMPE numpy implementation exactly.
+This module contains the functions associated with filters needed for numerical stability.
+Matches the original SWAMPE numpy implementation.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
     Computes the coefficient for the fourth degree diffusion filter 
     described in Gelb and Gleeson (eq. 12) for geopotential.
     
-    CORRECTED: Uses original implicit filter formulation (no factor1 subtraction).
+    Uses original implicit filter formulation (no factor1 subtraction).
     """
     nvec = jnp.arange(N + 1, dtype=jnp.float64)
     ncoeff = (nvec * nvec / a**2) * ((nvec + 1) * (nvec + 1) / a**2)
@@ -72,7 +72,7 @@ def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     Computes the coefficient for the sixth degree diffusion filter 
     for vorticity and divergence.
     
-    CORRECTED: Uses original implicit filter formulation.
+    Uses original implicit filter formulation.
     """
     nvec = jnp.arange(N + 1, dtype=jnp.float64)
     
@@ -91,7 +91,7 @@ def sigma6Phi(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     """
     Computes the coefficient for the sixth degree diffusion filter for geopotential.
     
-    CORRECTED: Uses original implicit filter formulation (no factor1 subtraction).
+    Uses original implicit filter formulation (no factor1 subtraction).
     """
     nvec = jnp.arange(N + 1, dtype=jnp.float64)
     

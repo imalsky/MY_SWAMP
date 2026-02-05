@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CORRECTED: This module contains the functions that perform the explicit timestepping scheme 
+This module contains the functions that perform the explicit timestepping scheme
 as described in Hack and Jakob (1992).
 
 This is a corrected JAX version that matches the original numpy implementation exactly.
@@ -22,7 +22,6 @@ def phi_timestep(
 ):
     """
     Explicit time-stepping for geopotential Phi.
-    CORRECTED to match original numpy implementation.
     """
     # Component 1: Forward Legendre of Phim0
     Phicomp1 = st.fwd_leg(Phim0, J, M, N, Pmn, w)

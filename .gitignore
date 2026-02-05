@@ -40,7 +40,6 @@ ENV/
 env/
 .conda/
 conda-env/
-# (If you ever create envs in-repo)
 envs/
 
 # === Jupyter ===
@@ -78,10 +77,6 @@ datasets/
 *.pickle
 
 # === Model / run artifacts ===
-tests/_compare_outputs/*
-
-
-# === Model / run artifacts ===
 runs/
 checkpoints/
 ckpt/
@@ -96,12 +91,12 @@ jax_cache/
 .cache/
 .jax/
 .jax_cache/
-# Some folks dump here; ignore generally
 /tmp/
 
-# === Test artifacts ===
+# === Test artifacts / reports ===
 test-results/
 reports/
+tests/_compare_outputs/
 
 # === Local config overrides (keep templates, ignore secrets/local) ===
 .env
@@ -117,15 +112,3 @@ secrets.*
 *.tar
 *.tar.gz
 *.tgz
-
-# generated test outputs
-/tests/_compare_outputs/
-
-# generated test outputs
-/tests/_compare_outputs/
-
-# generated test outputs
-/tests/_compare_outputs/
-
-# generated test outputs
-/tests/_compare_outputs/
