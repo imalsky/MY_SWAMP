@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from ._version import __version__
 """SWAMPE (JAX rewrite)
 
 This package mirrors the original SWAMPE module layout, but implements the
@@ -12,8 +15,6 @@ this package enables JAX 64-bit mode by default. To disable, set:
 
 before importing SWAMPE.
 """
-from __future__ import annotations
-
 import os as _os
 
 # Enable 64-bit for numerical parity with the reference numpy implementation.

@@ -118,6 +118,7 @@ class Static:
 @dataclass(frozen=True)
 class State:
     """Two-level (prev/curr) spectral+physical state for leapfrog-style stepping."""
+
     # Fourier coefficients at t-1 and t (J, M+1)
     etam_prev: jnp.ndarray
     etam_curr: jnp.ndarray
@@ -375,6 +376,7 @@ def _init_state_from_fields(
     Phim0 = st.fwd_fft_trunc(Phi0, I, M)
 
     # (m,n) spectral coefficients for wind inversion
+    # FIXED: Correct parameter order - Pmn before w
     etamn0 = st.fwd_leg(etam0, J, M, N, static.Pmn, static.w)
     deltamn0 = st.fwd_leg(deltam0, J, M, N, static.Pmn, static.w)
 
@@ -831,11 +833,8 @@ def run_model(
             taurad=float(taurad),
             taudrag=float(taudrag),
         )
-
-    out_dir = Path(custompath) if custompath is not None else Path("data")
-    wants_periodic = (saveflag and savefreq > 0) or (plotflag and plotfreq > 0)
-
-    if (saveflag or plotflag) and not out_dir.exists():
+    # Note: match legacy SWAMPE behavior: plotting does not create output directories.
+    # Data directories are created lazily by continuation.write_pickle() when saving.
         out_dir.mkdir(parents=True, exist_ok=True)
 
     if not wants_periodic:
@@ -902,8 +901,8 @@ def run_model(
         geopot_rows.append((float(out_t["phi_min"]), float(out_t["phi_max"])))
         last_fields = out_t
 
-        do_save = saveflag and savefreq > 0 and (t % savefreq == 0 or t == tmax_i - 1)
-        do_plot = plotflag and plotfreq > 0 and (t % plotfreq == 0 or t == tmax_i - 1)
+        do_save = saveflag and savefreq > 0 and (t % savefreq == 0)
+        do_plot = plotflag and plotfreq > 0 and (t % plotfreq == 0)
 
         if do_save or do_plot:
             ts = continuation.compute_timestamp(timeunits, t, float(dt))
@@ -918,12 +917,18 @@ def run_model(
                 np.asarray(out_t["V"]),
                 np.asarray(spinup_rows, dtype=np.float64),
                 np.asarray(geopot_rows, dtype=np.float64),
-                custompath=str(out_dir) + os.sep,
+                custompath=custompath,
             )
 
         if do_plot:
-            # Save plots alongside data files.
-            fig1 = plotting.quiver_geopot_plot(
+            # Match legacy SWAMPE: generate figures (interactive) and let plotting.py decide about saving.
+            plotting.mean_zonal_wind_plot(
+                np.asarray(out_t["U"]),
+                np.asarray(static.mus),
+                ts,
+                units=timeunits,
+            )
+            plotting.quiver_geopot_plot(
                 np.asarray(out_t["U"]),
                 np.asarray(out_t["V"]),
                 np.asarray(out_t["Phi"] + float(Phibar)),
@@ -934,12 +939,11 @@ def run_model(
                 minlevel=minlevel,
                 maxlevel=maxlevel,
             )
-            fig1.savefig(out_dir / f"PhiUV-{ts}.png", dpi=150)
-            fig1.clf()
-
-            fig2 = plotting.mean_zonal_wind_plot(np.asarray(out_t["U"]), np.asarray(static.mus), ts, units=timeunits)
-            fig2.savefig(out_dir / f"Umean-{ts}.png", dpi=150)
-            fig2.clf()
+            plotting.spinup_plot(
+                np.asarray(spinup_rows, dtype=np.float64),
+                float(dt),
+                units=timeunits,
+            )
 
     # Assemble minimal output payload.
     spinup = np.asarray(spinup_rows, dtype=np.float64)
