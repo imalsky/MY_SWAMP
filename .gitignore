@@ -126,3 +126,6 @@ secrets.*
 
 # generated test outputs
 /tests/_compare_outputs/
+
+# generated test outputs
+/tests/_compare_outputs/
