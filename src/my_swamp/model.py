@@ -33,6 +33,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import logging
+import warnings
+
 from . import continuation
 from . import filters
 from . import forcing
@@ -40,6 +43,29 @@ from . import initial_conditions
 from . import plotting
 from . import spectral_transform as st
 from . import time_stepping
+
+
+
+
+_LOGGER = logging.getLogger(__name__)
+_WARNED_OPTION_B = False
+
+
+def _warn_option_b_once(*, expflag: bool) -> None:
+    """Emit a loud one-time warning that this build is Option B (corrected physics)."""
+    global _WARNED_OPTION_B
+    if _WARNED_OPTION_B:
+        return
+    _WARNED_OPTION_B = True
+    msg = (
+        "SWAMPE-JAX OPTION B (corrected physics): this build intentionally departs from historical SWAMPE "
+        "trajectories. Modified-Euler (expflag=False) uses mathematically consistent dt scaling (tstepcoeff1/2, "
+        "tstepcoeff2/2) uniformly; historical SWAMPE effectively used tstepcoeff1/4 for phi/delta and inconsistent "
+        "scaling for forced eta. Explicit mode (expflag=True) includes bug fixes (divergence update completeness and "
+        "Rayleigh-drag double-counting). DO NOT EXPECT output parity with numpy SWAMPE; validate and tune accordingly."
+    )
+    _LOGGER.warning(msg)
+    warnings.warn(msg, UserWarning, stacklevel=2)
 
 
 def _is_python_scalar(x: Any) -> bool:
@@ -589,6 +615,8 @@ def run_model_scan(
         modalflag=bool(modalflag),
         alpha=alpha,
     )
+
+    _warn_option_b_once(expflag=flags.expflag)
 
     static = build_static(
         M=int(M),

@@ -22,6 +22,17 @@ BUGFIX (mathematics):
 
     This will change trajectories compared to previous behavior.
 
+BUGFIX (physics):
+    The explicit (expflag=True) scheme previously double-counted Rayleigh drag when forcing was enabled.
+    In this codebase, `forcing.Rfun` returns modal forcing terms F and G that already include the
+    Rayleigh drag contribution (F = Ru - U/taudrag, G = Rv - V/taudrag, unless taudrag==-1).
+
+    The explicit scheme was also adding additional drag terms proportional to U/taudrag and V/taudrag,
+    which results in drag being applied twice (asymmetrically across the Pmn/Hmn components).
+
+    This file now removes those extra drag terms and uses only Fm/Gm (which already encode drag).
+    This changes trajectories for expflag=True when forcflag=True.
+
 JAX-compatibility (no change in values):
     Python `if` statements on `forcflag`/`diffflag` have been replaced with
     `jax.lax.cond` so the functions remain traceable/jittable even if the flags
@@ -43,15 +54,15 @@ from . import spectral_transform as st
 
 _LOGGER = logging.getLogger(__name__)
 
-_WARNED_DELTA_FIX = False
+_WARNED_EXPLICIT_FIX = False
 
 
 def _warn_once(msg: str) -> None:
     """Emit a one-time warning through both logging and `warnings`."""
-    global _WARNED_DELTA_FIX
-    if _WARNED_DELTA_FIX:
+    global _WARNED_EXPLICIT_FIX
+    if _WARNED_EXPLICIT_FIX:
         return
-    _WARNED_DELTA_FIX = True
+    _WARNED_EXPLICIT_FIX = True
     _LOGGER.warning(msg)
     warnings.warn(msg, UserWarning, stacklevel=2)
 
@@ -176,9 +187,7 @@ def delta_timestep(
     """Explicit time-stepping for divergence delta (BUGFIXED)."""
 
     _warn_once(
-        "SWAMPE-JAX BUGFIX: explicit_tdiff.delta_timestep now uses the full divergence update "
-        "deltacomp1+deltacomp2+deltacomp3+deltacomp4 (previously only deltacomp1 was used). "
-        "Expect different trajectories vs older outputs."
+        "SWAMPE-JAX OPTION B (corrected physics): explicit_tdiff has two behavior changes when expflag=True. (1) delta_timestep now uses the full divergence update deltacomp1+deltacomp2+deltacomp3+deltacomp4 (previously only deltacomp1 was used). (2) Rayleigh drag is no longer double-counted in eta/delta forcing: Fm/Gm already include drag via forcing.Rfun, so the extra U/taudrag and V/taudrag terms were removed. Expect different trajectories vs historical SWAMPE for expflag=True."
     )
 
     # Component 1: Forward Legendre of deltam0 (leapfrog carry-over)
@@ -201,23 +210,17 @@ def delta_timestep(
     deltamntstep = deltacomp1 + deltacomp2 + deltacomp3 + deltacomp4
 
     def add_forcing(x):
-        # deltaf1
-        deltaf1prep = tstepcoeff1 * (1j) * mJarray * Um / taudrag
-        deltaf1 = st.fwd_leg(deltaf1prep, J, M, N, Pmn, w)
+        # NOTE (2026-02-06): Fm/Gm already include Rayleigh drag via forcing.Rfun.
+        # The explicit scheme previously added separate U/taudrag and V/taudrag terms, which
+        # double-counted drag in the Pmn-basis contributions. We therefore use only Fm/Gm here.
 
-        # deltaf2
-        deltaf2prep = tstepcoeff1 * Vm / taudrag
-        deltaf2 = st.fwd_leg(deltaf2prep, J, M, N, Hmn, w)
-
-        # deltaf3
         deltaf3prep = tstepcoeff1 * (1j) * mJarray * Fm
         deltaf3 = st.fwd_leg(deltaf3prep, J, M, N, Pmn, w)
 
-        # deltaf4
         deltaf4prep = tstepcoeff1 * Gm
         deltaf4 = st.fwd_leg(deltaf4prep, J, M, N, Hmn, w)
 
-        deltaforcing = -deltaf1 + deltaf2 + deltaf3 - deltaf4
+        deltaforcing = deltaf3 - deltaf4
         return x + deltaforcing
 
     deltamntstep = _cond(forcflag, add_forcing, lambda x: x, deltamntstep)
@@ -272,6 +275,10 @@ def eta_timestep(
 ):
     """Explicit time-stepping for absolute vorticity eta."""
 
+    _warn_once(
+        "SWAMPE-JAX OPTION B (corrected physics): explicit_tdiff has two behavior changes when expflag=True. (1) delta_timestep now uses the full divergence update deltacomp1+deltacomp2+deltacomp3+deltacomp4 (previously only deltacomp1 was used). (2) Rayleigh drag is no longer double-counted in eta/delta forcing: Fm/Gm already include drag via forcing.Rfun, so the extra U/taudrag and V/taudrag terms were removed. Expect different trajectories vs historical SWAMPE for expflag=True."
+    )
+
     # Component 1: Forward Legendre of etam0
     etacomp1 = st.fwd_leg(etam0, J, M, N, Pmn, w)
 
@@ -286,23 +293,17 @@ def eta_timestep(
     etamntstep = etacomp1 - etacomp2 + etacomp3
 
     def add_forcing(x):
-        # etaf1
-        etaf1prep = tstepcoeff1 * (1j) * mJarray * Vm / taudrag
-        etaf1 = st.fwd_leg(etaf1prep, J, M, N, Pmn, w)
+        # NOTE (2026-02-06): Fm/Gm already include Rayleigh drag via forcing.Rfun.
+        # The explicit scheme previously added separate U/taudrag and V/taudrag terms, which
+        # double-counted drag (most visibly in the Pmn-basis terms). We therefore use only Fm/Gm.
 
-        # etaf2
-        etaf2prep = tstepcoeff1 * Um / taudrag
-        etaf2 = st.fwd_leg(etaf2prep, J, M, N, Hmn, w)
-
-        # etaf3
         etaf3prep = tstepcoeff1 * (1j) * mJarray * Gm
         etaf3 = st.fwd_leg(etaf3prep, J, M, N, Pmn, w)
 
-        # etaf4
         etaf4prep = tstepcoeff1 * Fm
         etaf4 = st.fwd_leg(etaf4prep, J, M, N, Hmn, w)
 
-        etaforcing = -etaf1 + etaf2 + etaf3 + etaf4
+        etaforcing = etaf3 + etaf4
         return x + etaforcing
 
     etamntstep = _cond(forcflag, add_forcing, lambda x: x, etamntstep)

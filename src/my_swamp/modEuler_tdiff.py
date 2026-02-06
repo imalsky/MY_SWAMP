@@ -15,11 +15,13 @@ BUGFIX (mathematics / control flow):
     1) `phi_timestep` and `delta_timestep` computed a full update using
        `tstepcoeff1/=2` and `tstepcoeff2/=2`, but then *always overwrote* the
        result inside the `forcflag`/`else` blocks after dividing the coefficients
-       by 2 *again*. This produced an inconsistent effective timestep and left
-       dead code behind.
+       by 2 *again*. In practice, the first computation was always overwritten, so
+       the effective coefficient was consistently "double-halved" (phi/delta used
+       an effective tstepcoeff1/4).
 
-       Fix: apply the (2*dt -> dt) conversion exactly once and compute the update
-       exactly once.
+       Option B behavior: this JAX version intentionally applies the (2*dt -> dt)
+       conversion exactly once (effective tstepcoeff1/2). This is a behavior change
+       relative to historical SWAMPE trajectories.
 
     2) `delta_timestep` used forced expressions `(Bm + Fm)` and `(Am - Gm)` even
        in the `forcflag == False` branch.
@@ -116,9 +118,7 @@ def phi_timestep(
     """Modified-Euler update for geopotential Phi."""
 
     _warn_once(
-        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
-        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
-        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
     )
 
     # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step (dt).
@@ -209,9 +209,7 @@ def delta_timestep(
     """Modified-Euler update for divergence delta."""
 
     _warn_once(
-        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
-        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
-        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
     )
 
     tstepcoeff1 = tstepcoeff1 / 2.0
@@ -304,9 +302,7 @@ def eta_timestep(
     """Modified-Euler update for absolute vorticity eta."""
 
     _warn_once(
-        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
-        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
-        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
     )
 
     # Consistent (2*dt -> dt) conversion regardless of forcflag.
