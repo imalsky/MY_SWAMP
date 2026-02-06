@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
+from . import explicit_tdiff as exp_tdiff
+from . import modEuler_tdiff as mod_tdiff
 from . import spectral_transform as st
 
 
@@ -51,139 +54,151 @@ def tstepping(
 ):
     """Top-level time stepping wrapper.
 
-    Returns updated spectral coefficients and physical-space fields for eta, delta, Phi and winds.
+    Returns updated spectral coefficients and physical-space fields for eta, delta,
+    Phi and winds.
+
+    NOTE (2026-02-06)
+    -----------------
+    JAX-compatibility: scheme selection (explicit vs modified Euler) is now done via
+    `jax.lax.cond` instead of a Python `if`, so `expflag` can be a traced JAX boolean.
+    Output values for ordinary Python bool flags are unchanged.
     """
-    if expflag:
-        from . import explicit_tdiff as tdiff
-    else:
-        from . import modEuler_tdiff as tdiff
 
-    newPhimn, newPhitstep = tdiff.phi_timestep(
-        etam0,
-        etam1,
-        deltam0,
-        deltam1,
-        Phim0,
-        Phim1,
-        I,
-        J,
-        M,
-        N,
-        Am,
-        Bm,
-        Cm,
-        Dm,
-        Em,
-        Fm,
-        Gm,
-        Um,
-        Vm,
-        Pmn,
-        Hmn,
-        w,
-        tstepcoeff,
-        tstepcoeff2,
-        mJarray,
-        narray,
-        PhiFm,
-        dt,
-        a,
-        Phibar,
-        taurad,
-        taudrag,
-        forcflag,
-        diffflag,
-        sigma,
-        sigmaPhi,
-        test,
-        t,
-    )
+    def run_scheme(tdiff):
+        newPhimn, newPhitstep = tdiff.phi_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+        )
 
-    newdeltamn, newdeltatstep = tdiff.delta_timestep(
-        etam0,
-        etam1,
-        deltam0,
-        deltam1,
-        Phim0,
-        Phim1,
-        I,
-        J,
-        M,
-        N,
-        Am,
-        Bm,
-        Cm,
-        Dm,
-        Em,
-        Fm,
-        Gm,
-        Um,
-        Vm,
-        Pmn,
-        Hmn,
-        w,
-        tstepcoeff,
-        tstepcoeff2,
-        mJarray,
-        narray,
-        PhiFm,
-        dt,
-        a,
-        Phibar,
-        taurad,
-        taudrag,
-        forcflag,
-        diffflag,
-        sigma,
-        sigmaPhi,
-        test,
-        t,
-    )
+        newdeltamn, newdeltatstep = tdiff.delta_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+        )
 
-    newetamn, newetatstep = tdiff.eta_timestep(
-        etam0,
-        etam1,
-        deltam0,
-        deltam1,
-        Phim0,
-        Phim1,
-        I,
-        J,
-        M,
-        N,
-        Am,
-        Bm,
-        Cm,
-        Dm,
-        Em,
-        Fm,
-        Gm,
-        Um,
-        Vm,
-        Pmn,
-        Hmn,
-        w,
-        tstepcoeff,
-        tstepcoeff2,
-        mJarray,
-        narray,
-        PhiFm,
-        dt,
-        a,
-        Phibar,
-        taurad,
-        taudrag,
-        forcflag,
-        diffflag,
-        sigma,
-        sigmaPhi,
-        test,
-        t,
-    )
+        newetamn, newetatstep = tdiff.eta_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+        )
 
-    Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
+        Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
 
-    return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
+        return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
+
+    def do_explicit(_: object):
+        return run_scheme(exp_tdiff)
+
+    def do_modeuler(_: object):
+        return run_scheme(mod_tdiff)
+
+    return jax.lax.cond(jnp.asarray(expflag), do_explicit, do_modeuler, operand=None)
 
 
 def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
@@ -229,7 +244,7 @@ def RMS_winds(a: float, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, 
         rms = sqrt( (a^2*dphi*dlambda/area_planet) * sum(U^2 + V^2) )
     where dphi and dlambda are inferred from the uniform grids.
     """
-    phis = jnp.arcsin(mus)                      # (J,)
+    phis = jnp.arcsin(mus)  # (J,)
     deltalambda = lambdas[2] - lambdas[1]
     deltaphi = phis[2] - phis[1]
     area_planet = 4.0 * jnp.pi * a**2

@@ -1,84 +1,47 @@
 """
-This module contains the initialization functions.
-Matches the original SWAMPE numpy implementation exactly.
+Initialization routines for SWAMPE (JAX port).
+
+This is a line-by-line faithful translation of the original SWAMPE numpy
+initialization logic, but vectorized and implemented in JAX.
 """
 from __future__ import annotations
 
-import math
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
-import numpy as onp
 import jax.numpy as jnp
+
+from . import spectral_transform as st
 
 
 def test1_init(a: float, omega: float, a1: float) -> Tuple[float, float, float, float, float]:
     """
     Initializes the parameters from Test 1 in Williamson et al. (1992),
     Advection of Cosine Bell over the Pole.
-    
-    Parameters
-    ----------
-    a : float
-        Planetary radius, in meters.
-    omega : float
-        Planetary rotation rate, in radians per second.
-    a1 : float
-        Angle of advection, in radians.
 
-    Returns
-    -------
-    SU0 : float
-        Amplitude parameter from Test 1 in Williamson et al. (1992)
-    sina : float
-        sine of the angle of advection.
-    cosa : float
-        cosine of the angle of advection.
-    etaamp : float
-        Amplitude of absolute vorticity.
-    Phiamp : float
-        Amplitude of geopotential.
+    Returns:
+        SU0, sina, cosa, etaamp, Phiamp
     """
-    # Parameters for Test 1 in Williamson et al. (1992)
-    SU0 = 2.0 * onp.pi * a / (3600.0 * 24 * 12)
-    sina = onp.sin(a1)  # sine of the angle of advection
-    cosa = onp.cos(a1)  # cosine of the angle of advection
-    etaamp = 2.0 * ((SU0 / a) + omega)  # relative vorticity amplitude
-    Phiamp = SU0 * a * omega + 0.5 * SU0**2  # geopotential height amplitude
-    
-    return float(SU0), float(sina), float(cosa), float(etaamp), float(Phiamp)
+    a = jnp.asarray(a, dtype=jnp.float64)
+    omega = jnp.asarray(omega, dtype=jnp.float64)
+    a1 = jnp.asarray(a1, dtype=jnp.float64)
+
+    SU0 = 2.0 * jnp.pi * a / (3600.0 * 24.0 * 12.0)
+    sina = jnp.sin(a1)
+    cosa = jnp.cos(a1)
+    etaamp = 2.0 * ((SU0 / a) + omega)
+    Phiamp = (SU0 * a * omega + 0.5 * SU0**2)
+    return SU0, sina, cosa, etaamp, Phiamp
 
 
 def spectral_params(M: int):
     """
     Generates the resolution parameters according to Table 1 and 2 from Jakob et al. (1993).
-    Note the timesteps are appropriate for Earth-like forcing. More strongly forced planets 
-    will need shorter timesteps.
 
-    Parameters
-    ----------
-    M : int
-        spectral resolution
-
-    Returns
-    -------
-    N : int
-        the highest degree of the Legendre functions for m = 0
-    I : int
-        number of longitudes
-    J : int
-        number of Gaussian latitudes
-    dt : float
-        timestep length, in seconds
-    lambdas : array of float
-        evenly spaced longitudes of length I
-    mus : array of float
-        Gaussian latitudes of length J
-    w : array of float
-        Gaussian weights of length J
+    Returns:
+        N, I, J, dt, lambdas, mus, w
     """
-    N = M
-    
-    # Set dimensions according to Jakob and Hack (1993), Tables 1, 2, and 3
+    N = int(M)
+
     if M == 42:
         J = 64
         I = 128
@@ -92,12 +55,10 @@ def spectral_params(M: int):
         I = 320
         dt = 600
     else:
-        raise ValueError(f'Unsupported value of M={M}. Only 42, 63, and 106 are supported')
-    from . import spectral_transform as st
+        raise ValueError(f"Unsupported value of M={M}. Only 42, 63, and 106 are supported.")
 
-    lambdas = st.build_lambdas(I)
-    mus = st.build_mus(J)
-    w = st.build_w(J)
+    lambdas = st.build_lambdas(I, dtype=jnp.float64)
+    mus, w = st.gauss_legendre(J, dtype=jnp.float64)
     return N, I, J, dt, lambdas, mus, w
 
 
@@ -108,99 +69,65 @@ def state_var_init(
     lambdas: jnp.ndarray,
     test: Optional[int],
     etaamp: float,
-    *args
+    *args,
 ):
     """
-    Initializes state variables.
+    Initializes state variables (eta, delta, Phi) in physical space.
 
-    Parameters
-    ----------
-    I : int
-        number of longitudes.
-    J : int
-        number of latitudes.
-    mus : array of float
-        Array of Gaussian latitudes of length J.
-    lambdas : array of float
-        Uniformly spaced longitudes of length I.
-    test : int or None
-        The number of the regime being tested from Williamson et al. (1992)
-    etaamp : float
-        Amplitude of absolute vorticity.
-    *args : 
-        Additional initialization parameters for tests from Williamson et al. (1992):
-        a, sina, cosa, Phibar, Phiamp
-
-    Returns
-    -------
-    etaic0 : array (J, I)
-        Initial condition for absolute vorticity
-    etaic1 : array (J, I)
-        Second initial condition for absolute vorticity
-    deltaic0 : array (J, I)
-        Initial condition for divergence
-    deltaic1 : array (J, I)
-        Second initial condition for divergence
-    Phiic0 : array (J, I)
-        Initial condition for geopotential
-    Phiic1 : array (J, I)
-        Second initial condition for geopotential
+    Returns:
+        etaic0, etaic1, deltaic0, deltaic1, Phiic0, Phiic1
     """
-    etaic0 = jnp.zeros((J, I))
-    Phiic0 = jnp.zeros((J, I))
-    deltaic0 = jnp.zeros((J, I))
-    
-    # Parse args if test is not None
+    I = int(I)
+    J = int(J)
+
+    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]          # (J,1)
+    lam = jnp.asarray(lambdas, dtype=jnp.float64)[None, :]     # (1,I)
+    sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
+
+    etaamp = jnp.asarray(etaamp, dtype=jnp.float64)
+
+    deltaic0 = jnp.zeros((J, I), dtype=jnp.float64)
+    Phiic0 = jnp.zeros((J, I), dtype=jnp.float64)
+
     if test is not None:
-        if len(args) >= 5:
-            a, sina, cosa, Phibar, Phiamp = args[:5]
-        else:
-            raise ValueError("test=1 or test=2 requires args: a, sina, cosa, Phibar, Phiamp")
-    
+        if len(args) != 5:
+            raise ValueError("For test!=None, expected args=(a,sina,cosa,Phibar,Phiamp).")
+        a, sina, cosa, Phibar, Phiamp = args
+        a = jnp.asarray(a, dtype=jnp.float64)
+        sina = jnp.asarray(sina, dtype=jnp.float64)
+        cosa = jnp.asarray(cosa, dtype=jnp.float64)
+        Phibar = jnp.asarray(Phibar, dtype=jnp.float64)
+        Phiamp = jnp.asarray(Phiamp, dtype=jnp.float64)
+
     if test == 1:
-        # Williamson Test 1 - Advection of cosine bell
-        bumpr = a / 3  # radius of the bump
-        mucenter = 0
-        lambdacenter = 3 * onp.pi / 2
-        
-        # Build arrays for vectorized computation
-        lam = lambdas[None, :]  # (1, I)
-        mu = mus[:, None]       # (J, 1)
-        
-        # eta initialization
-        etaic0 = etaamp * (-jnp.cos(lam) * jnp.sqrt(1 - mu**2) * sina + mu * cosa)
-        
-        # Phi initialization with bump
-        # dist = a * arccos(mucenter*mu + cos(arcsin(mucenter))*cos(arcsin(mu))*cos(lambda - lambdacenter))
-        # Since mucenter = 0, this simplifies
-        coslat = jnp.sqrt(1 - mu**2)
-        dist = a * jnp.arccos(coslat * jnp.cos(lam - lambdacenter))
-        
-        # Where dist < bumpr, add the bump
-        inbump = dist < bumpr
-        bump = (Phibar / 2) * (1 + jnp.cos(onp.pi * dist / bumpr))
-        Phiic0 = jnp.where(inbump, bump, 0.0)
-        
-    elif test == 2:
-        # Williamson Test 2 - Steady state nonlinear zonal geostrophic flow
-        lam = lambdas[None, :]  # (1, I)
-        mu = mus[:, None]       # (J, 1)
-        
-        latlonarg = -jnp.cos(lam) * jnp.sqrt(1 - mu**2) * sina + mu * cosa
+        # Test 1: cosine bell bump in geopotential, vorticity set by solid-body rotation tilt
+        latlonarg = -jnp.cos(lam) * sqrt_1m * sina + mu * cosa
         etaic0 = etaamp * latlonarg
-        Phiic0 = (Phibar - Phiamp) * latlonarg**2
-        
+
+        bumpr = a / 3.0
+        mucenter = 0.0
+        lambdacenter = 3.0 * jnp.pi / 2.0
+
+        # With mucenter=0, the expression simplifies but we keep the original form.
+        dist_arg = mucenter * mu + jnp.cos(jnp.arcsin(mucenter)) * jnp.cos(jnp.arcsin(mu)) * jnp.cos(lam - lambdacenter)
+        dist_arg = jnp.clip(dist_arg, -1.0, 1.0)
+        dist = a * jnp.arccos(dist_arg)
+
+        bump = (Phibar / 2.0) * (1.0 + jnp.cos(jnp.pi * dist / bumpr))
+        Phiic0 = jnp.where(dist < bumpr, bump, 0.0)
+
+    elif test == 2:
+        # Test 2: balanced zonal flow (Williamson Test 2 as in stswm)
+        latlonarg = -jnp.cos(lam) * sqrt_1m * sina + mu * cosa
+        etaic0 = etaamp * latlonarg
+        Phiic0 = (Phibar - Phiamp) * (latlonarg**2)
+
     else:
-        # Default initialization (test=None)
-        lam = lambdas[None, :]
-        mu = mus[:, None]
-        # sina=0, cosa=1 case
-        etaic0 = etaamp * (-jnp.cos(lam) * jnp.sqrt(1 - mu**2) * 0 + mu * 1)
-    
-    etaic1 = etaic0  # need two time steps to initialize
+        # Default: eta depends only on mu (sina=0, cosa=1)
+        etaic0 = etaamp * jnp.broadcast_to(mu, (J, I))
+    etaic1 = etaic0
     deltaic1 = deltaic0
     Phiic1 = Phiic0
-    
     return etaic0, etaic1, deltaic0, deltaic1, Phiic0, Phiic1
 
 
@@ -215,53 +142,32 @@ def velocity_init(
     test: Optional[int],
 ):
     """
-    Initializes the zonal and meridional components of the wind vector field.
+    Initializes the wind components U (zonal) and V (meridional) in physical space.
 
-    Parameters
-    ----------
-    I : int
-        number of longitudes.
-    J : int
-        number of latitudes.
-    SU0 : float
-        Amplitude parameter from Test 1 in Williamson et al. (1992)
-    cosa : float
-        cosine of the angle of advection.
-    sina : float
-        sine of the angle of advection.
-    mus : array of float
-        Array of Gaussian latitudes of length J
-    lambdas : array of float
-        Array of uniformly spaced longitudes of length I.
-    test : int or None
-        when applicable, number of test from Williamson et al. (1992).
-
-    Returns
-    -------
-    Uic : array (J, I)
-        the initial condition for the zonal velocity component
-    Vic : array (J, I)
-        the initial condition for the meridional velocity component
+    Returns:
+        Uic, Vic (both shape (J,I))
     """
-    lam = lambdas[None, :]  # (1, I)
-    mu = mus[:, None]       # (J, 1)
-    coslat = jnp.sqrt(jnp.maximum(0.0, 1 - mu**2))  # cos(arcsin(mu))
-    
+    I = int(I)
+    J = int(J)
+
+    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]
+    lam = jnp.asarray(lambdas, dtype=jnp.float64)[None, :]
+    sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
+
+    SU0 = jnp.asarray(SU0, dtype=jnp.float64)
+    cosa = jnp.asarray(cosa, dtype=jnp.float64)
+    sina = jnp.asarray(sina, dtype=jnp.float64)
+
     if test == 1:
-        # Test 1: includes extra coslat factor
-        Uic = SU0 * (coslat * cosa + mu * jnp.cos(lam) * sina) * coslat
-        Vic = -SU0 * jnp.sin(lam) * sina * coslat
-        
+        Uic = SU0 * (sqrt_1m * cosa + mu * jnp.cos(lam) * sina) * sqrt_1m
+        Vic = -SU0 * jnp.sin(lam) * sina * sqrt_1m
     elif test == 2:
-        # Test 2: no extra coslat factor
-        Uic = SU0 * (coslat * cosa + jnp.cos(lam) * mu * sina)
+        Uic = SU0 * (sqrt_1m * cosa + jnp.cos(lam) * mu * sina)
         Vic = -SU0 * (jnp.sin(lam) * sina)
-        
     else:
-        # Default: zero winds
-        Uic = jnp.zeros((J, I))
-        Vic = jnp.zeros((J, I))
-    
+        Uic = jnp.zeros((J, I), dtype=jnp.float64)
+        Vic = jnp.zeros((J, I), dtype=jnp.float64)
+
     return Uic, Vic
 
 
@@ -272,66 +178,34 @@ def ABCDE_init(
     Phiic0: jnp.ndarray,
     mus: jnp.ndarray,
     I: int,
-    J: int
+    J: int,
 ):
     """
-    Initializes the auxiliary nonlinear components.
-    
-    Parameters
-    ----------
-    Uic : array (J, I)
-        zonal velocity component
-    Vic : array (J, I)
-        meridional velocity component
-    etaic0 : array (J, I)
-        initial eta
-    Phiic0 : array (J, I)
-        initial Phi
-    mus : array (J,)
-        Gaussian latitudes
-    I : int
-        number of longitudes
-    J : int
-        number of latitudes
-
-    Returns
-    -------
-    Aic, Bic, Cic, Dic, Eic : arrays (J, I)
-        Nonlinear components
+    Initializes the auxiliary nonlinear components:
+        A=U*eta, B=V*eta, C=U*Phi, D=V*Phi,
+        E=(U^2+V^2)/(2*(1-mu^2)).
     """
-    mu = mus[:, None]
-    
-    Aic = Uic * etaic0  # A = U*eta
-    Bic = Vic * etaic0  # B = V*eta
-    Cic = Uic * Phiic0  # C = U*Phi
-    Dic = Vic * Phiic0  # D = V*Phi
-    
-    # E = (U^2 + V^2) / (2*(1-mu^2))
-    denom = 2 * (1 - mu**2)
-    denom = jnp.where(denom == 0, 1e-30, denom)  # avoid division by zero
-    Eic = (Uic**2 + Vic**2) / denom
-    
+    I = int(I)
+    J = int(J)
+
+    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]
+    denom = 2.0 * (1.0 - mu**2)
+
+    Aic = Uic * etaic0
+    Bic = Vic * etaic0
+    Cic = Uic * Phiic0
+    Dic = Vic * Phiic0
+    Eic = (Uic * Uic + Vic * Vic) / denom
+
     return Aic, Bic, Cic, Dic, Eic
 
 
 def coriolismn(M: int, omega: float) -> jnp.ndarray:
     """
     Initializes the Coriolis parameter in spectral space.
-    
-    Parameters
-    ----------
-    M : int
-        Spectral dimension.
-    omega : float
-        Planetary rotation rate, in radians per second.
-
-    Returns
-    -------
-    fmn : array (M+1, M+1)
-        The Coriolis parameter in spectral space.
     """
-    fmn = jnp.zeros((M + 1, M + 1))
-    # Matches original formula: omega/sqrt(0.375)
-    fmn = fmn.at[0, 1].set(omega / onp.sqrt(0.375))
-    
+    M = int(M)
+    omega = jnp.asarray(omega, dtype=jnp.float64)
+    fmn = jnp.zeros((M + 1, M + 1), dtype=jnp.float64)
+    fmn = fmn.at[0, 1].set(omega / jnp.sqrt(0.375))
     return fmn

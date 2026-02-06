@@ -1,583 +1,331 @@
 # -*- coding: utf-8 -*-
-"""
-This module contains the functions associated with the modified Euler time-stepping scheme. 
-The associated coefficients and the method are outlined in the Methods section of this documentation.
+"""my_swamp.modEuler_tdiff
+
+Functions associated with the modified-Euler time-stepping scheme.
+
+The public API (function names + signatures) is intentionally kept compatible with
+the historical SWAMPE layout because `time_stepping.tstepping(...)` calls these
+functions with many positional arguments.
+
+NOTE (2026-02-06)
+-----------------
+BUGFIX (mathematics / control flow):
+    The previous JAX port contained several copy/paste and control-flow issues:
+
+    1) `phi_timestep` and `delta_timestep` computed a full update using
+       `tstepcoeff1/=2` and `tstepcoeff2/=2`, but then *always overwrote* the
+       result inside the `forcflag`/`else` blocks after dividing the coefficients
+       by 2 *again*. This produced an inconsistent effective timestep and left
+       dead code behind.
+
+       Fix: apply the (2*dt -> dt) conversion exactly once and compute the update
+       exactly once.
+
+    2) `delta_timestep` used forced expressions `(Bm + Fm)` and `(Am - Gm)` even
+       in the `forcflag == False` branch.
+
+       Fix: when `forcflag` is false, use unforced `Am`/`Bm` consistently and do
+       not add the Phi forcing contribution.
+
+    3) `eta_timestep` applied the (2*dt -> dt) coefficient conversion only in the
+       `forcflag == False` path, making forced vs unforced runs use different
+       effective timesteps.
+
+       Fix: apply the conversion unconditionally so both forced/unforced modes
+       use the same scheme.
+
+JAX-compatibility (no change in values for static flags):
+    Python `if` statements on `forcflag`/`diffflag` are replaced with
+    `jax.lax.cond` / `jax.lax.select` so the functions remain traceable/jittable
+    when flags are provided as JAX booleans.
+
+USER WARNING:
+    These fixes can change model trajectories compared to previous outputs when
+    `expflag=False` (modified Euler branch).
 """
 
+from __future__ import annotations
 
+import logging
+import warnings
+from typing import Any, Callable
+
+import jax
 import jax.numpy as jnp
-#local imports
-from . import spectral_transform as st
+
 from . import filters
+from . import spectral_transform as st
+
+_LOGGER = logging.getLogger(__name__)
+_WARNED_MODEULER_FIX = False
 
 
-## PHI tstep
-def phi_timestep(etam0,etam1,deltam0,
-                 deltam1,Phim0,Phim1,
-                 I,J,M,N,Am,Bm,Cm,
-                 Dm,Em,Fm,Gm,Um,Vm,
-                 Pmn,Hmn,w,tstepcoeff1,
-                 tstepcoeff2,mJarray,narray,
-                 PhiFm,dt,a,Phibar,taurad,
-                 taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
-    """This function timesteps the geopotential Phi forward.
-
-    :param etam0: Fourier coefficents of absolute vorticity for one time step
-    :type etam0: array of float
-    :param etam1: Fourier coefficents of absolute vorticity for the following time step
-    :type etam1: array of float
-    :param deltam0: Fourier coefficents of divergence for one time step
-    :type deltam0: array of float
-    :param deltam1: Fourier coefficents of divergence for the following time step
-    :type deltam1:  array of float
-    :param Phim0: Fourier coefficents of geopotential for one time step
-    :type Phim0: array of float
-    :param Phim1: Fourier coefficents of geopotential for the following time step
-    :type Phim1: array of float
-    :param I: number of longitudes
-    :type I: int
-    :param J: number of Gaussian latitudes
-    :type J: int
-    :type M: int
-    :param N: highest degree of the Legendre functions for m=0
-    :type N: int
-    :param Am: Fourier coefficients of the nonlinear component A=U*eta
-    :type Am: array of float
-    :param Bm: Fourier coefficients of the nonlinear component B=V*eta
-    :type Bm: array of float
-    :param Cm: Fourier coefficients of the nonlinear component C=U*Phi
-    :type Cm: array of float
-    :param Dm: Fourier coefficients of the nonlinear component D=V*Phi
-    :type Dm: array of float
-    :param Em: Fourier coefficients of the nonlinear component E=(U^2+V^2)/(2(1-mu^2))
-    :type Em: array of float
-    :param Fm: Fourier coefficients of the zonal component of wind forcing
-    :type Fm: array of float
-    :param Gm:  Fourier coefficients of the meridional component of wind forcing
-    :type Gm: array of float
-    :param Um: Fourier coefficients of the zonal component of wind
-    :type Um: array of float
-    :param Vm: Fourier coefficients of the meridional component of wind
-    :type Vm: array of float
-    :param fmn: spectral coefficients of the Coriolis force
-    :type fmn: array of float
-    :param Pmn: associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Pmn: array of float
-    :param Hmn: derivatives of the legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Hmn: array of float
-    :param w: Gauss Legendre weights
-    :type w: array of float
-    
-    :param tstepcoeff: coefficient for time-stepping of the form 2dt/(a(1-mus^2))
-    :type tstepcoeff: array of float
-    
-    :param tstepcoeff2: time stepping coefficient of the form 2dt/a^2
-    :type tstepcoeff2: array of float
-    
-    :param tstepcoeffmn: an array of coefficients a/(n(n+1))
-    :type tstepcoeffmn: array of float
-    
-    :param marray: coefficients equal to m=0,1,...,M in a matrix M+1xN+1
-    :type marray: array of float
-    
-    :param mJarray:  coefficients equal to m=0,1,...,M in a matrix M+1xJ
-    :type mJarray: array of float
-    
-    :param narray: array n(n+1) in a matrix M+1xN+1
-    :type narray: array of float
-    :param PhiFm: Fourier coefficients of the geopotential forcing 
-    :type PhiFM: array of float
-    :param dt: time step, in seconds
-    :type dt: float
-    :param a: planetary radius, m
-    :type a: float
-    :param Phibar: time-invariant spatial mean geopotential, height of the top layer
-    :type Phibar: float
-    :param taurad: radiative timescale
-    :type taurad: float
-    :param taudrag: drag timescale
-    :type taudrag: float
-    :param forcflag: forcing flag
-    :type forcflag: float
-    
-    :param diffflag: hyperdiffusion filter flag
-    :type diffflag: float
-    
-    :param sigma: hyperdiffusion filter coefficients for absolute vorticity and divergence
-    :type sigma: array of float
-    :param sigmaPhi: hyperdiffusion filter coefficients for geopotential
-    :type sigmaPhi: array of float
-    :param test: number of test, defaults to None
-    :type test: int
-    :param t: number of current time step
-    :type t: int
-
-    :return: 
-        - Phimntstep
-                Updated spectral coefficients of geopotential
-        - newPhitstep
-                Updated geopotential
-    :rtype: array of float
-    """
-    
-    
-    #use the "1" for state variables (the latest one)
-    tstepcoeff1=tstepcoeff1/2
-    tstepcoeff2=tstepcoeff2/2
-
-    
-    Phicomp1=st.fwd_leg(Phim1, J, M, N, Pmn, w)
-    
-    Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-    Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
-    
-    Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-    Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
-    
-    Phicomp4=dt*Phibar*st.fwd_leg(deltam1, J, M, N, Pmn, w)
-    
-    
-    deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm)
-    deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-    
-
-    deltacomp3prep=jnp.multiply(tstepcoeff1,Am)
-
-    deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-    
-    deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-    deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-    
-    deltacomp5=jnp.multiply(narray,deltacomp5)
-    
-    Phimntstep=Phicomp1-Phicomp2+Phicomp3-Phicomp4-Phibar*(0.5)*(deltacomp2+deltacomp3+deltacomp5+(1/a**2)*jnp.multiply(narray,Phicomp1))
-
-    if forcflag==True:
-        tstepcoeff1=tstepcoeff1/2
-        tstepcoeff2=tstepcoeff2/2
-    
-        
-        Phicomp1=st.fwd_leg(Phim1, J, M, N, Pmn, w)
-        
-        Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-        Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
-        
-        Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-        Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
-        
-        Phicomp4=dt*Phibar*st.fwd_leg(deltam1, J, M, N, Pmn, w)
-        
-        deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm+Fm)
-        deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-        
-    
-        deltacomp3prep=jnp.multiply(tstepcoeff1,Am-Gm)
-    
-        deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-        
-        deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-        deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-        
-        deltacomp5=jnp.multiply(narray,deltacomp5)
-       
-        Phimntstep=Phicomp1-Phicomp2+Phicomp3-Phicomp4-Phibar*(0.5)*(deltacomp2+deltacomp3+deltacomp5+(1/a**2)*jnp.multiply(narray,Phicomp1))
-
-        Phiforcing=st.fwd_leg((dt)*PhiFm, J, M, N, Pmn, w)
-
-        Phimntstep=Phimntstep+Phiforcing
-    else:
-        tstepcoeff1=tstepcoeff1/2
-        tstepcoeff2=tstepcoeff2/2
-    
-        
-        Phicomp1=st.fwd_leg(Phim1, J, M, N, Pmn, w)
-        
-        Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-        Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
-        
-        Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-        Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
-        
-        Phicomp4=dt*Phibar*st.fwd_leg(deltam1, J, M, N, Pmn, w)
-        
-        
-        deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm)
-        deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-        
-    
-        deltacomp3prep=jnp.multiply(tstepcoeff1,Am)
-    
-        deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-        
-        deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-        deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-        
-        deltacomp5=jnp.multiply(narray,deltacomp5)
-
-       
-        Phimntstep=Phicomp1-Phicomp2+Phicomp3-Phicomp4-Phibar*(0.5)*(deltacomp2+deltacomp3+deltacomp5+(1/a**2)*jnp.multiply(narray,Phicomp1))
+def _warn_once(msg: str) -> None:
+    global _WARNED_MODEULER_FIX
+    if _WARNED_MODEULER_FIX:
+        return
+    _WARNED_MODEULER_FIX = True
+    _LOGGER.warning(msg)
+    warnings.warn(msg, UserWarning, stacklevel=2)
 
 
-    
-    if diffflag==True:
-        Phimntstep=filters.diffusion(Phimntstep, sigmaPhi) 
-        
-        
-    
-    newPhimtstep=st.invrs_leg(Phimntstep, I,J, M, N, Pmn)
-    newPhitstep=st.invrs_fft(newPhimtstep, I)
-
-    
-    return Phimntstep,newPhitstep
-
-def delta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFm,dt,a,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
-    """This function timesteps the divergence delta forward.
-    
-    :param etam0: Fourier coefficents of absolute vorticity for one time step
-    :type etam0: array of float
-    :param etam1: Fourier coefficents of absolute vorticity for the following time step
-    :type etam1: array of float
-    :param deltam0: Fourier coefficents of divergence for one time step
-    :type deltam0: array of float
-    :param deltam1: Fourier coefficents of divergence for the following time step
-    :type deltam1:  array of float
-    :param Phim0: Fourier coefficents of geopotential for one time step
-    :type Phim0: array of float
-    :param Phim1: Fourier coefficents of geopotential for the following time step
-    :type Phim1: array of float
-    :param I: number of longitudes
-    :type I: int
-    :param J: number of Gaussian latitudes
-    :type J: int
-    :type M: int
-    :param N: highest degree of the Legendre functions for m=0
-    :type N: int
-    :param Am: Fourier coefficients of the nonlinear component A=U*eta
-    :type Am: array of float
-    :param Bm: Fourier coefficients of the nonlinear component B=V*eta
-    :type Bm: array of float
-    :param Cm: Fourier coefficients of the nonlinear component C=U*Phi
-    :type Cm: array of float
-    :param Dm: Fourier coefficients of the nonlinear component D=V*Phi
-    :type Dm: array of float
-    :param Em: Fourier coefficients of the nonlinear component E=(U^2+V^2)/(2(1-mu^2))
-    :type Em: array of float
-    :param Fm: Fourier coefficients of the zonal component of wind forcing
-    :type Fm: array of float
-    :param Gm:  Fourier coefficients of the meridional component of wind forcing
-    :type Gm: array of float
-    :param Um: Fourier coefficients of the zonal component of wind
-    :type Um: array of float
-    :param Vm: Fourier coefficients of the meridional component of wind
-    :type Vm: array of float
-    :param fmn: spectral coefficients of the Coriolis force
-    :type fmn: array of float
-    :param Pmn: associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Pmn: array of float
-    :param Hmn: derivatives of the associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Hmn: array of float
-    :param w: Gauss Legendre weights
-    :type w: array of float
-    
-    :param tstepcoeff: coefficient for time-stepping of the form 2dt/(a(1-mus^2))
-    :type tstepcoeff: array of float
-    
-    :param tstepcoeff2: time stepping coefficient of the form 2dt/a^2
-    :type tstepcoeff2: array of float
-    
-    :param tstepcoeffmn: an array of coefficients a/(n(n+1))
-    :type tstepcoeffmn: array of float
-    
-    :param marray: coefficients equal to m=0,1,...,M in a matrix M+1xN+1
-    :type marray: array of float
-    
-    :param mJarray:  coefficients equal to m=0,1,...,M in a matrix M+1xJ
-    :type mJarray: array of float
-    
-    :param narray: array n(n+1) in a matrix M+1xN+1
-    :type narray: array of float
-    :param PhiFm: Fourier coefficients of the geopotential forcing 
-    :type PhiFM: array of float
-    :param dt: time step, in seconds
-    :type dt: float
-    :param a: planetary radius, m
-    :type a: float
-    :param Phibar: time-invariant spatial mean geopotential, height of the top layer
-    :type Phibar: float
-    :param taurad: radiative timescale
-    :type taurad: float
-    :param taudrag: drag timescale
-    :type taudrag: float
-    :param forcflag: forcing flag
-    :type forcflag: float
-    
-    :param diffflag: hyperdiffusion filter flag
-    :type diffflag: float
-    
-    :param sigma: hyperdiffusion filter coefficients for absolute vorticity and divergence
-    :type sigma: array of float
-    :param sigmaPhi: hyperdiffusion filter coefficients for geopotential
-    :type sigmaPhi: array of float
-    :param test: number of test, defaults to None
-    :type test: int
-    :param t: number of current time step
-    :type t: int
-
-    :return: 
-        - deltamntstep
-                Updated spectral coefficients of divergence
-        - newdeltatstep
-                Updated divergence
-    :rtype: array of float
-    """
-    
-    tstepcoeff1=tstepcoeff1/2
-    tstepcoeff2=tstepcoeff2/2
-    
-    
-    deltacomp1=st.fwd_leg(deltam1, J, M, N, Pmn, w)
-    
-    deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm)
-    deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-    
-
-    deltacomp3prep=jnp.multiply(tstepcoeff1,Am)
-
-    deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-    
-    deltacomp4prep=jnp.multiply(tstepcoeff2,Phim1)
-    deltacomp4=st.fwd_leg(deltacomp4prep, J, M, N, Pmn, w)
-    
-    deltacomp4=jnp.multiply(narray,deltacomp4)
-    
-    deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-    deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-    
-    deltacomp5=jnp.multiply(narray,deltacomp5)
-    
-    Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-    Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
+def _cond(pred: Any, true_fun: Callable[[Any], Any], false_fun: Callable[[Any], Any], operand: Any) -> Any:
+    return jax.lax.cond(jnp.asarray(pred), true_fun, false_fun, operand)
 
 
-    Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-    Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
+def phi_timestep(
+    etam0,
+    etam1,
+    deltam0,
+    deltam1,
+    Phim0,
+    Phim1,
+    I,
+    J,
+    M,
+    N,
+    Am,
+    Bm,
+    Cm,
+    Dm,
+    Em,
+    Fm,
+    Gm,
+    Um,
+    Vm,
+    Pmn,
+    Hmn,
+    w,
+    tstepcoeff1,
+    tstepcoeff2,
+    mJarray,
+    narray,
+    PhiFm,
+    dt,
+    a,
+    Phibar,
+    taurad,
+    taudrag,
+    forcflag,
+    diffflag,
+    sigma,
+    sigmaPhi,
+    test,
+    t,
+):
+    """Modified-Euler update for geopotential Phi."""
 
-    deltamntstep=deltacomp1+deltacomp2+deltacomp3+deltacomp4+deltacomp5+jnp.multiply(narray,(Phicomp2+Phicomp3)/2)/a**2-Phibar*jnp.multiply(narray,deltacomp1)/a**2
+    _warn_once(
+        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
+        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
+        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+    )
+
+    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step (dt).
+    tstepcoeff1 = tstepcoeff1 / 2.0
+    tstepcoeff2 = tstepcoeff2 / 2.0
+
+    forc_pred = jnp.asarray(forcflag)
+
+    # Forcing enters through the wind forcing terms (Fm, Gm) in the divergence-related pieces.
+    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
+    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
+
+    # Main Phi terms
+    Phicomp1 = st.fwd_leg(Phim1, J, M, N, Pmn, w)
+    Phicomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
+    Phicomp3 = st.fwd_leg(tstepcoeff1 * Dm, J, M, N, Hmn, w)
+    Phicomp4 = dt * Phibar * st.fwd_leg(deltam1, J, M, N, Pmn, w)
+
+    # Divergence-related coupling pieces
+    deltacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
+    deltacomp3 = st.fwd_leg(tstepcoeff1 * A_eff, J, M, N, Hmn, w)
+    deltacomp5 = st.fwd_leg(tstepcoeff2 * Em, J, M, N, Pmn, w)
+    deltacomp5 = narray * deltacomp5
+
+    Phimntstep = (
+        Phicomp1
+        - Phicomp2
+        + Phicomp3
+        - Phicomp4
+        - Phibar
+        * 0.5
+        * (deltacomp2 + deltacomp3 + deltacomp5 + (1.0 / (a**2)) * jnp.multiply(narray, Phicomp1))
+    )
+
+    def add_phi_forcing(x):
+        Phiforcing = st.fwd_leg(dt * PhiFm, J, M, N, Pmn, w)
+        return x + Phiforcing
+
+    Phimntstep = _cond(forc_pred, add_phi_forcing, lambda x: x, Phimntstep)
+    Phimntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigmaPhi), lambda x: x, Phimntstep)
+
+    newPhimtstep = st.invrs_leg(Phimntstep, I, J, M, N, Pmn)
+    newPhitstep = st.invrs_fft(newPhimtstep, I)
+
+    return Phimntstep, newPhitstep
 
 
-    if forcflag==True:
-        
-        tstepcoeff1=tstepcoeff1/2
-        tstepcoeff2=tstepcoeff2/2
-        
-        
-        deltacomp1=st.fwd_leg(deltam1, J, M, N, Pmn, w)
-        
-        deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm+Fm)
-        deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-        
-    
-        deltacomp3prep=jnp.multiply(tstepcoeff1,Am-Gm)
-    
-        deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-        
-        deltacomp4prep=jnp.multiply(tstepcoeff2,Phim1)
-        deltacomp4=st.fwd_leg(deltacomp4prep, J, M, N, Pmn, w)
-        
-        deltacomp4=jnp.multiply(narray,deltacomp4)
-        
-        deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-        deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-        
-        deltacomp5=jnp.multiply(narray,deltacomp5)
-        
-    
-        
-        Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-        Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
-    
-    
-        Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-        Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
-    
-        deltamntstep=deltacomp1+deltacomp2+deltacomp3+deltacomp4+deltacomp5+jnp.multiply(narray,(Phicomp2+Phicomp3)/2)/a**2-Phibar*jnp.multiply(narray,deltacomp1)/a**2
+def delta_timestep(
+    etam0,
+    etam1,
+    deltam0,
+    deltam1,
+    Phim0,
+    Phim1,
+    I,
+    J,
+    M,
+    N,
+    Am,
+    Bm,
+    Cm,
+    Dm,
+    Em,
+    Fm,
+    Gm,
+    Um,
+    Vm,
+    Pmn,
+    Hmn,
+    w,
+    tstepcoeff1,
+    tstepcoeff2,
+    mJarray,
+    narray,
+    PhiFm,
+    dt,
+    a,
+    Phibar,
+    taurad,
+    taudrag,
+    forcflag,
+    diffflag,
+    sigma,
+    sigmaPhi,
+    test,
+    t,
+):
+    """Modified-Euler update for divergence delta."""
 
-        Phiforcing=jnp.multiply(narray,st.fwd_leg((dt/2)*PhiFm, J, M, N, Pmn, w))/a**2
+    _warn_once(
+        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
+        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
+        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+    )
 
-        deltamntstep=deltamntstep+Phiforcing
-        
-    else:
-            
-        
-        tstepcoeff1=tstepcoeff1/2
-        tstepcoeff2=tstepcoeff2/2
-        
-        
-        deltacomp1=st.fwd_leg(deltam1, J, M, N, Pmn, w)
-        
-        deltacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Bm+Fm)
-        deltacomp2=st.fwd_leg(deltacomp2prep, J, M, N, Pmn, w)
-        
-    
-        deltacomp3prep=jnp.multiply(tstepcoeff1,Am-Gm)
-    
-        deltacomp3=st.fwd_leg(deltacomp3prep, J, M, N, Hmn, w)
-        
-        deltacomp4prep=jnp.multiply(tstepcoeff2,Phim1)
-        deltacomp4=st.fwd_leg(deltacomp4prep, J, M, N, Pmn, w)
-        
-        deltacomp4=jnp.multiply(narray,deltacomp4)
-        
-        deltacomp5prep=jnp.multiply(tstepcoeff2,Em)
-        deltacomp5=st.fwd_leg(deltacomp5prep, J, M, N, Pmn, w)
-        
-        deltacomp5=jnp.multiply(narray,deltacomp5)
+    tstepcoeff1 = tstepcoeff1 / 2.0
+    tstepcoeff2 = tstepcoeff2 / 2.0
 
-        Phicomp2prep=jnp.multiply(tstepcoeff1,jnp.multiply((1j)*mJarray,Cm))
-        Phicomp2=st.fwd_leg(Phicomp2prep, J, M, N, Pmn, w)
+    forc_pred = jnp.asarray(forcflag)
 
-        Phicomp3prep=jnp.multiply(tstepcoeff1,Dm)
-        Phicomp3=st.fwd_leg(Phicomp3prep, J, M, N, Hmn, w)
+    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
+    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
 
-        deltamntstep=deltacomp1+deltacomp2+deltacomp3+deltacomp4+deltacomp5+jnp.multiply(narray,(Phicomp2+Phicomp3)/2)/a**2-Phibar*jnp.multiply(narray,deltacomp1)/a**2
+    deltacomp1 = st.fwd_leg(deltam1, J, M, N, Pmn, w)
 
-    if diffflag==True:
-        deltamntstep=filters.diffusion(deltamntstep, sigma)
+    deltacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
+    deltacomp3 = st.fwd_leg(tstepcoeff1 * A_eff, J, M, N, Hmn, w)
 
-    newdeltamtstep=st.invrs_leg(deltamntstep, I,J, M, N, Pmn)
-    newdeltatstep=st.invrs_fft(newdeltamtstep, I)
-    return deltamntstep,newdeltatstep
+    deltacomp4 = st.fwd_leg(tstepcoeff2 * Phim1, J, M, N, Pmn, w)
+    deltacomp4 = narray * deltacomp4
+
+    deltacomp5 = st.fwd_leg(tstepcoeff2 * Em, J, M, N, Pmn, w)
+    deltacomp5 = narray * deltacomp5
+
+    Phicomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
+    Phicomp3 = st.fwd_leg(tstepcoeff1 * Dm, J, M, N, Hmn, w)
+
+    deltamntstep = (
+        deltacomp1
+        + deltacomp2
+        + deltacomp3
+        + deltacomp4
+        + deltacomp5
+        + jnp.multiply(narray, (Phicomp2 + Phicomp3) / 2.0) / (a**2)
+        - Phibar * jnp.multiply(narray, deltacomp1) / (a**2)
+    )
+
+    def add_phi_forcing(x):
+        # Retain the historical dt/2 factor here: this term represents the Phi-forcing contribution
+        # appearing through the (Phi^{n+1}+Phi^{n})/2 average used in the divergence update.
+        Phiforcing = jnp.multiply(narray, st.fwd_leg((dt / 2.0) * PhiFm, J, M, N, Pmn, w)) / (a**2)
+        return x + Phiforcing
+
+    deltamntstep = _cond(forc_pred, add_phi_forcing, lambda x: x, deltamntstep)
+    deltamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, deltamntstep)
+
+    newdeltamtstep = st.invrs_leg(deltamntstep, I, J, M, N, Pmn)
+    newdeltatstep = st.invrs_fft(newdeltamtstep, I)
+
+    return deltamntstep, newdeltatstep
 
 
-def eta_timestep(etam0,etam1,deltam0,deltam1,Phim0,Phim1,I,J,M,N,Am,Bm,Cm,Dm,Em,Fm,Gm,Um,Vm,Pmn,Hmn,w,tstepcoeff1,tstepcoeff2,mJarray,narray,PhiFm,dt,a,Phibar,taurad,taudrag,forcflag,diffflag,sigma,sigmaPhi,test,t):
-    """This function timesteps the absolute vorticity eta forward.
+def eta_timestep(
+    etam0,
+    etam1,
+    deltam0,
+    deltam1,
+    Phim0,
+    Phim1,
+    I,
+    J,
+    M,
+    N,
+    Am,
+    Bm,
+    Cm,
+    Dm,
+    Em,
+    Fm,
+    Gm,
+    Um,
+    Vm,
+    Pmn,
+    Hmn,
+    w,
+    tstepcoeff1,
+    tstepcoeff2,
+    mJarray,
+    narray,
+    PhiFm,
+    dt,
+    a,
+    Phibar,
+    taurad,
+    taudrag,
+    forcflag,
+    diffflag,
+    sigma,
+    sigmaPhi,
+    test,
+    t,
+):
+    """Modified-Euler update for absolute vorticity eta."""
 
-    :param etam0: Fourier coefficents of absolute vorticity for one time step
-    :type etam0: array of float
-    :param etam1: Fourier coefficents of absolute vorticity for the following time step
-    :type etam1: array of float
-    :param deltam0: Fourier coefficents of divergence for one time step
-    :type deltam0: array of float
-    :param deltam1: Fourier coefficents of divergence for the following time step
-    :type deltam1:  array of float
-    :param Phim0: Fourier coefficents of geopotential for one time step
-    :type Phim0: array of float
-    :param Phim1: Fourier coefficents of geopotential for the following time step
-    :type Phim1: array of float
-    :param I: number of longitudes
-    :type I: int
-    :param J: number of Gaussian latitudes
-    :type J: int
-    :type M: int
-    :param N: highest degree of the Legendre functions for m=0
-    :type N: int
-    :param Am: Fourier coefficients of the nonlinear component A=U*eta
-    :type Am: array of float
-    :param Bm: Fourier coefficients of the nonlinear component B=V*eta
-    :type Bm: array of float
-    :param Cm: Fourier coefficients of the nonlinear component C=U*Phi
-    :type Cm: array of float
-    :param Dm: Fourier coefficients of the nonlinear component D=V*Phi
-    :type Dm: array of float
-    :param Em: Fourier coefficients of the nonlinear component E=(U^2+V^2)/(2(1-mu^2))
-    :type Em: array of float
-    :param Fm: Fourier coefficients of the zonal component of wind forcing
-    :type Fm: array of float
-    :param Gm:  Fourier coefficients of the meridional component of wind forcing
-    :type Gm: array of float
-    :param Um: Fourier coefficients of the zonal component of wind
-    :type Um: array of float
-    :param Vm: Fourier coefficients of the meridional component of wind
-    :type Vm: array of float
-    :param fmn: spectral coefficients of the Coriolis force
-    :type fmn: array of float
-    :param Pmn: associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Pmn: array of float
-    :param Hmn: derivatives of the associated legendre functions evaluated at the Gaussian latitudes mus  up to wavenumber M
-    :type Hmn: array of float
-    :param w: Gauss Legendre weights
-    :type w: array of float
-    
-    :param tstepcoeff: coefficient for time-stepping of the form 2dt/(a(1-mus^2))
-    :type tstepcoeff: array of float
-    
-    :param tstepcoeff2: time stepping coefficient of the form 2dt/a^2
-    :type tstepcoeff2: array of float
-    
-    :param tstepcoeffmn: an array of coefficients a/(n(n+1))
-    :type tstepcoeffmn: array of float
-    
-    :param marray: coefficients equal to m=0,1,...,M in a matrix M+1xN+1
-    :type marray: array of float
-    
-    :param mJarray:  coefficients equal to m=0,1,...,M in a matrix M+1xJ
-    :type mJarray: array of float
-    
-    :param narray: array n(n+1) in a matrix M+1xN+1
-    :type narray: array of float
-    :param PhiFm: Fourier coefficients of the geopotential forcing 
-    :type PhiFM: array of float
-    :param dt: time step, in seconds
-    :type dt: float
-    :param a: planetary radius, m
-    :type a: float
-    :param Phibar: time-invariant spatial mean geopotential, height of the top layer
-    :type Phibar: float
-    :param taurad: radiative timescale
-    :type taurad: float
-    :param taudrag: drag timescale
-    :type taudrag: float
-    :param forcflag: forcing flag
-    :type forcflag: float
-    
-    :param diffflag: hyperdiffusion filter flag
-    :type diffflag: float
-    
-    :param sigma: hyperdiffusion filter coefficients for absolute vorticity and divergence
-    :type sigma: array of float
-    :param sigmaPhi: hyperdiffusion filter coefficients for geopotential
-    :type sigmaPhi: array of float
-    :param test: number of test, defaults to None
-    :type test: int
-    :param t: number of current time step
-    :type t: int
+    _warn_once(
+        "SWAMPE-JAX BUGFIX: modEuler_tdiff used an inconsistent/double-halved timestep in phi/delta, "
+        "forced terms leaked into the unforced delta branch, and eta scaling differed between forcflag "
+        "modes. These have been corrected; expect different trajectories vs older outputs (expflag=False)."
+    )
 
-    :return: 
-        - etamntstep
-                Updated spectral coefficients of absolute vorticity
-        - newetatstep
-                Updated absolute vorticity
-    :rtype: array of float
-    """
-    
-    if forcflag==True:
-        etacomp1=st.fwd_leg(etam1, J, M, N, Pmn, w)
-    
-        etacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Am-Gm)
-        etacomp2=st.fwd_leg(etacomp2prep, J, M, N, Pmn, w)
-        
-        etacomp3prep=jnp.multiply(tstepcoeff1,Bm+Fm)
-        etacomp3=st.fwd_leg(etacomp3prep, J, M, N, Hmn, w)
-        etamntstep=etacomp1-etacomp2+etacomp3
-        
-    else:
-        tstepcoeff1=tstepcoeff1/2
+    # Consistent (2*dt -> dt) conversion regardless of forcflag.
+    tstepcoeff1 = tstepcoeff1 / 2.0
 
-        etacomp1=st.fwd_leg(etam1, J, M, N, Pmn, w)
-    
-        etacomp2prep=jnp.multiply(jnp.multiply(tstepcoeff1,(1j)*mJarray),Am)
-        etacomp2=st.fwd_leg(etacomp2prep, J, M, N, Pmn, w)
-        
-        etacomp3prep=jnp.multiply(tstepcoeff1,Bm)
-        etacomp3=st.fwd_leg(etacomp3prep, J, M, N, Hmn, w)
-    
-    
-    etamntstep=etacomp1-etacomp2+etacomp3
+    forc_pred = jnp.asarray(forcflag)
 
-    
-    if diffflag==True:
-        etamntstep=filters.diffusion(etamntstep, sigma)
-    
-    newetamtstep=st.invrs_leg(etamntstep, I,J, M, N, Pmn)
-    newetatstep=st.invrs_fft(newetamtstep, I)
-    return etamntstep,newetatstep
+    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
+    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
+
+    etacomp1 = st.fwd_leg(etam1, J, M, N, Pmn, w)
+    etacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * A_eff, J, M, N, Pmn, w)
+    etacomp3 = st.fwd_leg(tstepcoeff1 * B_eff, J, M, N, Hmn, w)
+
+    etamntstep = etacomp1 - etacomp2 + etacomp3
+
+    etamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, etamntstep)
+
+    newetamtstep = st.invrs_leg(etamntstep, I, J, M, N, Pmn)
+    newetatstep = st.invrs_fft(newetamtstep, I)
+
+    return etamntstep, newetatstep

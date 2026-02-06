@@ -1,404 +1,247 @@
 """
-Spectral transform module for JAX-based SWAMPE.
+Spectral transform utilities for SWAMPE (JAX port).
+
+This module mirrors the original SWAMPE `spectral_transform.py` API, but the
+core operations are implemented in JAX so they are JIT-compilable and
+differentiable.
+
+Conventions (matches the reference numpy SWAMPE):
+  - Longitudes are on an evenly spaced grid in [-pi, pi).
+  - Gaussian latitudes (mu = sin(phi)) and weights use Gauss–Legendre quadrature.
+  - Associated Legendre functions are *scaled* by:
+        sqrt((2n+1)/2 * (n-m)!/(n+m)!)
+  - SciPy's `lpmn` includes the Condon–Shortley phase; the reference SWAMPE
+    removes it by flipping odd m. This port matches that behavior.
 """
 from __future__ import annotations
 
-import math
-from typing import Tuple
+from typing import Dict, Tuple
 
-import numpy as onp
 import jax.numpy as jnp
+from jax.scipy.special import gammaln
+
+# -----------------------------------------------------------------------------
+# Small caches for static objects (quadrature + basis)
+# -----------------------------------------------------------------------------
+# NOTE: Pmn/Hmn are uniquely determined by (J,M,N,dtype) for canonical Gaussian
+# nodes returned by `gauss_legendre(J)`. If you pass custom `mus`, disable caching.
+_GL_CACHE: Dict[Tuple[int, str], Tuple[jnp.ndarray, jnp.ndarray]] = {}
+_PMN_CACHE: Dict[Tuple[int, int, int, str], Tuple[jnp.ndarray, jnp.ndarray]] = {}
 
 
-# ---------------------------- GRID HELPERS ----------------------------
+def build_lambdas(I: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+    """Evenly spaced longitudes in [-pi, pi) of length I (legacy convention)."""
+    return jnp.linspace(-jnp.pi, jnp.pi, num=int(I), endpoint=False, dtype=dtype)
 
-def _gauss_legendre_nodes_weights(J: int) -> Tuple[onp.ndarray, onp.ndarray]:
-    """Return (mus, w) using SciPy (preferred) or NumPy fallback.
 
-    Legacy SWAMPE uses ``scipy.special.roots_legendre``. We use SciPy when
-    available to maximize numerical parity; otherwise we fall back to
-    ``numpy.polynomial.legendre.leggauss``.
+def gauss_legendre(J: int, *, dtype: jnp.dtype = jnp.float64) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Return Gauss–Legendre nodes and weights on [-1, 1] (J-point quadrature).
+
+    SciPy-free replacement for `scipy.special.roots_legendre(J)`.
+    Uses Golub–Welsch (Jacobi matrix eigen-decomposition).
     """
-    J_i = int(J)
-    try:
-        import scipy.special as sp  # type: ignore
+    J = int(J)
+    key = (J, jnp.dtype(dtype).name)
+    cached = _GL_CACHE.get(key)
+    if cached is not None:
+        return cached
 
-        mus_np, w_np = sp.roots_legendre(J_i)
-    except Exception:
-        mus_np, w_np = onp.polynomial.legendre.leggauss(J_i)
+    i = jnp.arange(1, J, dtype=dtype)
+    beta = i / jnp.sqrt(4.0 * i * i - 1.0)
 
-    # Force float64 to match the legacy reference.
-    return onp.asarray(mus_np, dtype=onp.float64), onp.asarray(w_np, dtype=onp.float64)
+    # Dense symmetric Jacobi matrix.
+    Jmat = jnp.diag(beta, 1) + jnp.diag(beta, -1)
 
+    eigvals, eigvecs = jnp.linalg.eigh(Jmat)  # ascending
+    mus = eigvals.astype(dtype)
+    w = (2.0 * (eigvecs[0, :] ** 2)).astype(dtype)
 
-def build_lambdas(I: int, *, dtype=jnp.float64) -> jnp.ndarray:
-    """Build evenly spaced longitudes (lambda) of length I.
-
-    Matches legacy SWAMPE: ``np.linspace(-pi, pi, num=I, endpoint=False)``.
-    """
-    I_i = int(I)
-    lambdas_np = onp.linspace(-onp.pi, onp.pi, num=I_i, endpoint=False, dtype=onp.float64)
-    out = jnp.asarray(lambdas_np)
-    return out.astype(dtype)
+    _GL_CACHE[key] = (mus, w)
+    return mus, w
 
 
-def build_mus(J: int, *, dtype=jnp.float64) -> jnp.ndarray:
-    """Build Gauss-Legendre latitudes (mu) of length J."""
-    mus_np, _w_np = _gauss_legendre_nodes_weights(J)
-    out = jnp.asarray(mus_np)
-    return out.astype(dtype)
+def roots_legendre(J: int, *, dtype: jnp.dtype = jnp.float64) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Legacy-compatible alias for Gauss–Legendre nodes/weights."""
+    return gauss_legendre(J, dtype=dtype)
 
 
-def build_w(J: int, *, dtype=jnp.float64) -> jnp.ndarray:
-    """Build Gauss-Legendre weights (w) of length J."""
-    _mus_np, w_np = _gauss_legendre_nodes_weights(J)
-    out = jnp.asarray(w_np)
-    return out.astype(dtype)
+def build_mus(J: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+    """Legacy helper: return Gauss–Legendre nodes."""
+    mus, _ = gauss_legendre(J, dtype=dtype)
+    return mus
 
 
-# ---------------------------- BASIS BUILDING ----------------------------
-
-def _scaling_term(n: int, m: int) -> float:
-    """Same scaling used in the legacy SciPy-based PmnHmn."""
-    if n < m:
-        return 0.0
-    # sqrt((2n+1)/2 * (n-m)!/(n+m)!)
-    # use log-gamma for numerical stability
-    lg = math.lgamma
-    log_ratio = lg(n - m + 1) - lg(n + m + 1)
-    return math.sqrt((2.0 * n + 1.0) / 2.0 * math.exp(log_ratio))
+def build_w(J: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+    """Legacy helper: return Gauss–Legendre weights."""
+    _, w = gauss_legendre(J, dtype=dtype)
+    return w
 
 
-def _double_factorial_odd(n: int) -> int:
-    """Compute (2m-1)!! for odd n."""
-    out = 1
-    k = n
-    while k > 1:
-        out *= k
-        k -= 2
-    return out
+def _scaling_table(M: int, N: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+    """Legacy scaling: sqrt((2n+1)/2 * (n-m)!/(n+m)!)."""
+    m = jnp.arange(M + 1, dtype=dtype)[:, None]
+    n = jnp.arange(N + 1, dtype=dtype)[None, :]
+    valid = n >= m
+
+    log_ratio = jnp.where(
+        valid,
+        gammaln(n - m + 1.0) - gammaln(n + m + 1.0),
+        -jnp.inf,
+    )
+    scale = jnp.where(
+        valid,
+        jnp.sqrt(((2.0 * n + 1.0) / 2.0) * jnp.exp(log_ratio)),
+        0.0,
+    )
+    return scale.astype(dtype)
 
 
-def compute_legendre_basis(
-    mus: jnp.ndarray,
-    M: int,
-    N: int,
-    *,
-    dtype=jnp.float64,
-    use_scipy: bool = False,
+def PmnHmn(
+    J: int, M: int, N: int, mus: jnp.ndarray, *, dtype: jnp.dtype = jnp.float64
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Compute Pmn and Hmn (associated Legendre polynomials and their H-derivatives).
+    """Compute scaled associated Legendre basis Pmn and Hmn.
 
-    Output shapes match the legacy code:
+    Outputs:
       Pmn: (J, M+1, N+1)
-      Hmn: (J, M+1, N+1)
+      Hmn: (J, M+1, N+1) where H = (1 - mu^2) dP/dmu with the same scaling.
 
-    Notes on end-to-end differentiability:
-      - These depend only on the fixed grid (mus) and truncation (M,N).
-      - They are typically treated as constants; gradients rarely need to flow through them.
-      - The returned arrays are JAX arrays so the rest of the code is fully JAX.
-
-    If use_scipy=True and SciPy is available, uses scipy.special.lpmn to match the legacy results.
-    Otherwise uses a standard three-term recurrence (unnormalized) plus an analytic derivative formula.
+    Conventions follow the original SWAMPE code:
+      - Start from the standard recurrence that includes Condon–Shortley phase,
+        then flip odd m to match SWAMPE (i.e., remove the CS phase).
+      - Apply the SWAMPE scaling factor sqrt((2n+1)/2 * (n-m)!/(n+m)!).
     """
-    mu_np = onp.asarray(mus, dtype=onp.float64)
-    J = mu_np.shape[0]
+    J = int(J)
+    M = int(M)
+    N = int(N)
 
-    if use_scipy:
-        try:
-            import scipy.special as sp
-        except ImportError as e:
-            raise ImportError(
-                "SciPy not available, but use_scipy=True. Install scipy or set use_scipy=False."
-            ) from e
+    key = (J, M, N, jnp.dtype(dtype).name)
+    cached = _PMN_CACHE.get(key)
+    if cached is not None:
+        return cached
 
-        Pmn = onp.zeros((J, M + 1, N + 1), dtype=onp.float64)
-        Hmn = onp.zeros((J, M + 1, N + 1), dtype=onp.float64)
-        for j in range(J):
-            P, dP = sp.lpmn(M, N, float(mu_np[j]))
-            Pmn[j, :, :] = P[:, :]
-            # H = (1 - mu^2) dP/dmu
-            Hmn[j, :, :] = (1.0 - mu_np[j] ** 2) * dP[:, :]
+    x = jnp.asarray(mus, dtype=dtype)
+    if x.ndim != 1 or x.shape[0] != J:
+        raise ValueError(f"mus must have shape ({J},), got {x.shape}")
 
-        # match legacy sign convention
-        for m in range(1, M + 1, 2):
-            Pmn[:, m, :] *= -1.0
-            Hmn[:, m, :] *= -1.0
+    # Unscaled P^m_n(x) including CS phase, stored as (m,n,j).
+    P = jnp.zeros((M + 1, N + 1, J), dtype=dtype)
+    P = P.at[0, 0, :].set(1.0)
 
-        # scaling per (m,n)
-        for m in range(M + 1):
-            for n in range(m, N + 1):
-                s = _scaling_term(n, m)
-                Pmn[:, m, n] *= s
-                Hmn[:, m, n] *= s
+    # m=0 Legendre polynomials.
+    if N >= 1:
+        P = P.at[0, 1, :].set(x)
+    for n in range(2, N + 1):
+        P0n = ((2 * n - 1) * x * P[0, n - 1, :] - (n - 1) * P[0, n - 2, :]) / n
+        P = P.at[0, n, :].set(P0n)
 
-        return jnp.asarray(Pmn, dtype=dtype), jnp.asarray(Hmn, dtype=dtype)
+    sqrt_1mx2 = jnp.sqrt(jnp.maximum(0.0, 1.0 - x * x))
 
-    # -------- recurrence fallback (no SciPy) --------
-    Pmn = onp.zeros((J, M + 1, N + 1), dtype=onp.float64)
-    Hmn = onp.zeros((J, M + 1, N + 1), dtype=onp.float64)
-
-    x = mu_np  # (J,)
-    one_minus_x2 = onp.maximum(0.0, 1.0 - x * x)
-
-    for m in range(M + 1):
-        # P_m^m
-        if m == 0:
-            Pmm = onp.ones_like(x)
-        else:
-            Pmm = ((-1) ** m) * _double_factorial_odd(2 * m - 1) * (one_minus_x2 ** (m / 2.0))
-        Pmn[:, m, m] = Pmm
+    # m>=1 via standard recurrences.
+    for m in range(1, M + 1):
+        P_mm = -(2 * m - 1) * sqrt_1mx2 * P[m - 1, m - 1, :]
+        P = P.at[m, m, :].set(P_mm)
 
         if m < N:
-            Pm1m = x * (2 * m + 1) * Pmm
-            Pmn[:, m, m + 1] = Pm1m
+            P = P.at[m, m + 1, :].set((2 * m + 1) * x * P_mm)
 
-        # upward recurrence for n >= m+2
         for n in range(m + 2, N + 1):
-            Pn1 = Pmn[:, m, n - 1]
-            Pn2 = Pmn[:, m, n - 2]
-            Pn = ((2 * n - 1) * x * Pn1 - (n + m - 1) * Pn2) / (n - m)
-            Pmn[:, m, n] = Pn
+            P_mn = ((2 * n - 1) * x * P[m, n - 1, :] - (n + m - 1) * P[m, n - 2, :]) / (n - m)
+            P = P.at[m, n, :].set(P_mn)
 
-        # Hmn from derivative identity:
-        # H = (1-x^2) dP = (n+m) P_{n-1}^m - n x P_n^m
-        for n in range(m, N + 1):
-            if n == m:
-                Pnm1 = 0.0
-            else:
-                Pnm1 = Pmn[:, m, n - 1]
-            Pn = Pmn[:, m, n]
-            H = (n + m) * Pnm1 - n * x * Pn
-            Hmn[:, m, n] = H
+    # H = (1-x^2) dP/dx computed from the stable identity:
+    #   (x^2 - 1) dP^m_n/dx = n x P^m_n - (n+m) P^m_{n-1}
+    # so
+    #   (1-x^2) dP^m_n/dx = (n+m) P^m_{n-1} - n x P^m_n
+    H = jnp.zeros_like(P)
 
-    # legacy sign flip for odd m
+    # m=0: avoid n-1=-1 at n=0
+    H = H.at[0, 0, :].set(0.0)
+    for n in range(1, N + 1):
+        H0n = n * P[0, n - 1, :] - n * x * P[0, n, :]
+        H = H.at[0, n, :].set(H0n)
+
+    for m in range(1, M + 1):
+        # n=m term (P[m, m-1] is 0.0 by construction)
+        H = H.at[m, m, :].set(-m * x * P[m, m, :])
+        for n in range(m + 1, N + 1):
+            H_mn = (n + m) * P[m, n - 1, :] - n * x * P[m, n, :]
+            H = H.at[m, n, :].set(H_mn)
+
+    # Remove CS phase (match SWAMPE): flip odd m.
     for m in range(1, M + 1, 2):
-        Pmn[:, m, :] *= -1.0
-        Hmn[:, m, :] *= -1.0
+        P = P.at[m, :, :].multiply(-1.0)
+        H = H.at[m, :, :].multiply(-1.0)
 
-    # apply scaling
-    for m in range(M + 1):
-        for n in range(m, N + 1):
-            s = _scaling_term(n, m)
-            Pmn[:, m, n] *= s
-            Hmn[:, m, n] *= s
+    # Apply SWAMPE scaling.
+    scale = _scaling_table(M, N, dtype=dtype)
+    P = (P * scale[:, :, None]).astype(dtype)
+    H = (H * scale[:, :, None]).astype(dtype)
 
-    return jnp.asarray(Pmn, dtype=dtype), jnp.asarray(Hmn, dtype=dtype)
+    Pmn = jnp.transpose(P, (2, 0, 1))
+    Hmn = jnp.transpose(H, (2, 0, 1))
 
-
-# Alias for backward compatibility with original SWAMPE
-def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray):
-    """Compatibility wrapper for the original SWAMPE `PmnHmn`.
-
-    The original code uses `scipy.special.lpmn` to build the associated Legendre basis.
-    For numerical parity, we use SciPy when available; if not, we fall back to the
-    recurrence implementation in `compute_legendre_basis`.
-
-    Parameters
-    ----------
-    J : int
-        Number of latitudes.
-    M : int
-        Highest wavenumber.
-    N : int
-        Highest degree of Legendre functions for m=0.
-    mus : array (J,)
-        Gaussian latitudes (roots of Legendre polynomial), in [-1, 1].
-
-    Returns
-    -------
-    Pmn : array (J, M+1, N+1)
-        Scaled associated Legendre polynomials.
-    Hmn : array (J, M+1, N+1)
-        Scaled derivatives multiplied by (1 - mus^2) (as in the original).
-    """
-    use_scipy = False
-    try:
-        import scipy  # noqa: F401
-        use_scipy = True
-    except Exception:
-        use_scipy = False
-
-    Pmn, Hmn = compute_legendre_basis(mus, M, N, use_scipy=use_scipy)
+    _PMN_CACHE[key] = (Pmn, Hmn)
     return Pmn, Hmn
-
-
-def fwd_leg(data: jnp.ndarray, J: int, M: int, N: int, Pmn: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
-    """Forward Legendre transform: FFT-truncated Fourier coeffs -> spectral (m,n).
-    
-    Parameters
-    ----------
-    data : array (J, M+1)
-        Fourier coefficients at each latitude
-    J : int
-        Number of latitudes
-    M : int
-        Highest wavenumber
-    N : int
-        Highest degree of Legendre polynomials
-    Pmn : array (J, M+1, N+1)
-        Associated Legendre polynomials at Gaussian latitudes
-    w : array (J,)
-        Gauss-Legendre weights
-        
-    Returns
-    -------
-    legcoeff : array (M+1, N+1)
-        Spectral coefficients
-    """
-    # Original loop-based implementation:
-    # for m in range(0, M+1):
-    #     for j in range(0, J):
-    #         legterm[j,m,:] = w[j] * data[j,m] * Pmn[j,m,:]
-    # legcoeff = np.sum(legterm, 0)
-    #
-    # Vectorized as einsum:
-    return jnp.einsum("j,jm,jmn->mn", w, data, Pmn)
 
 
 def fwd_fft_trunc(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
     """Forward FFT in longitude with truncation to m=0..M.
-    
-    Parameters
-    ----------
-    data : array (J, I)
-        Physical space data
-    I : int
-        Number of longitudes
-    M : int
-        Highest wavenumber for truncation
-        
-    Returns
-    -------
-    datam : array (J, M+1)
-        Truncated Fourier coefficients
+
+    Args:
+        data: (J, I) real/complex field in physical space.
+    Returns:
+        (J, M+1) complex Fourier coefficients.
     """
-    coeff = jnp.fft.fft(data, axis=1) / float(I)  # (J, I)
+    I = int(I)
+    M = int(M)
+    coeff = jnp.fft.fft(data, axis=1) / float(I)
     return coeff[:, : (M + 1)]
 
 
-def invrs_leg(legcoeff: jnp.ndarray, I: int, J: int, M: int, N: int, Pmn: jnp.ndarray) -> jnp.ndarray:
-    """Inverse Legendre transform: spectral (m,n) -> full Fourier coeffs (J, I).
-    
-    Parameters
-    ----------
-    legcoeff : array (M+1, N+1)
-        Spectral coefficients
-    I : int
-        Number of longitudes
-    J : int
-        Number of latitudes
-    M : int
-        Highest wavenumber
-    N : int
-        Highest degree of Legendre polynomials
-    Pmn : array (J, M+1, N+1)
-        Associated Legendre polynomials at Gaussian latitudes
-        
-    Returns
-    -------
-    approxXim : array (J, I) complex
-        Fourier coefficients at each latitude
-    """
-    # Initialize output arrays
-    approxXim = jnp.zeros((J, I), dtype=jnp.complex128)
-    approxXimPos = jnp.zeros((J, M + 1), dtype=jnp.complex128)
-    approxXimNeg = jnp.zeros((J, M), dtype=jnp.complex128)
-    
-    # For each m, sum only over n = m to N (triangular constraint)
-    # Original code:
-    # for m in range(0, M+1):
-    #     approxXimPos[:,m] = np.matmul(Pmn[:,m,m:N+1], legcoeff[m,m:N+1])
-    #     if m != 0:
-    #         negPmn = ((-1)**m) * Pmn[:,m,m:N+1]
-    #         negXileg = ((-1)**m) * np.conj(legcoeff[m,m:N+1])
-    #         approxXimNeg[:,-m] = np.matmul(negPmn, negXileg)
-    
-    # Vectorized implementation using a loop for the triangular structure
-    # (JAX will trace through this and create efficient code)
-    def compute_m_contribution(m, carry):
-        approxXimPos, approxXimNeg = carry
-        
-        # Positive m: sum Pmn[:,m,m:N+1] @ legcoeff[m,m:N+1]
-        # Create a mask for n >= m
-        n_indices = jnp.arange(N + 1)
-        mask = (n_indices >= m).astype(jnp.float64)  # 1 where n >= m, 0 elsewhere
-        
-        # Apply mask to get triangular slice effect
-        Pmn_masked = Pmn[:, m, :] * mask[None, :]  # (J, N+1)
-        legcoeff_masked = legcoeff[m, :] * mask    # (N+1,)
-        
-        pos_contrib = jnp.dot(Pmn_masked, legcoeff_masked)  # (J,)
-        approxXimPos = approxXimPos.at[:, m].set(pos_contrib)
-        
-        # Negative m (for m > 0): use symmetry
-        # negPmn = (-1)^m * Pmn, negXileg = (-1)^m * conj(legcoeff)
-        # Product: (-1)^(2m) * Pmn * conj(legcoeff) = Pmn * conj(legcoeff)
-        def compute_neg(args):
-            approxXimNeg, Pmn_masked, legcoeff_masked = args
-            neg_contrib = jnp.dot(Pmn_masked, jnp.conj(legcoeff_masked))
-            # Index -m in the negative array (which has M elements for m=1..M)
-            # -m maps to index M-m in a reversed sense, but we want index m-1 for m=1..M
-            return approxXimNeg.at[:, m - 1].set(neg_contrib)
-        
-        def skip_neg(args):
-            approxXimNeg, _, _ = args
-            return approxXimNeg
-        
-        approxXimNeg = jnp.where(
-            m > 0,
-            compute_neg((approxXimNeg, Pmn_masked, legcoeff_masked)),
-            approxXimNeg
-        )
-        
-        return (approxXimPos, approxXimNeg)
-    
-    # Use a simple Python loop - JAX will trace through it
-    for m in range(M + 1):
-        # Positive m: sum Pmn[:,m,m:N+1] @ legcoeff[m,m:N+1]
-        pos_contrib = jnp.dot(Pmn[:, m, m:N+1], legcoeff[m, m:N+1])
-        approxXimPos = approxXimPos.at[:, m].set(pos_contrib)
-        
-        # Negative m (for m > 0)
-        if m > 0:
-            # (-1)^m factors cancel: (-1)^m * Pmn * (-1)^m * conj(legcoeff) = Pmn * conj(legcoeff)
-            neg_contrib = jnp.dot(Pmn[:, m, m:N+1], jnp.conj(legcoeff[m, m:N+1]))
-            # Store at index m-1 (since approxXimNeg has shape (J, M) for m=1..M)
-            approxXimNeg = approxXimNeg.at[:, m - 1].set(neg_contrib)
-    
-    # Assemble full Fourier coefficient array
-    # Layout: [m=0, m=1, ..., m=M, zeros..., m=-M, ..., m=-1]
-    # Positive part: columns 0 to M
-    approxXim = approxXim.at[:, 0:M+1].set(approxXimPos)
-    
-    # Negative part: columns I-M to I-1 (for m = -M to -1)
-    # approxXimNeg[:, 0] corresponds to m=1's negative, should go to position I-1
-    # approxXimNeg[:, M-1] corresponds to m=M's negative, should go to position I-M
-    # So we need to reverse the order
-    approxXim = approxXim.at[:, I-M:I].set(approxXimNeg[:, ::-1])
-    
-    return approxXim
-
-
 def invrs_fft(approxXim: jnp.ndarray, I: int) -> jnp.ndarray:
-    """Inverse FFT in longitude.
-    
-    Parameters
-    ----------
-    approxXim : array (J, I) complex
-        Fourier coefficients
-    I : int
-        Number of longitudes
-        
-    Returns
-    -------
-    array (J, I)
-        Physical space data
-    """
+    """Inverse FFT in longitude (complex physical field)."""
+    I = int(I)
     return jnp.fft.ifft(float(I) * approxXim, axis=1)
 
 
-# ---------------------------- DIAGNOSTICS ----------------------------
+def fwd_leg(data: jnp.ndarray, J: int, M: int, N: int, Pmn: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
+    """Forward Legendre transform: truncated Fourier coeffs -> (m,n) spectral coefficients.
+
+    Args:
+        data: (J, M+1) complex Fourier coefficients.
+        w: (J,) Gauss–Legendre weights.
+        Pmn: (J, M+1, N+1) basis.
+    Returns:
+        (M+1, N+1) complex spectral coefficients.
+    """
+    # legcoeff[m,n] = sum_j w[j] * data[j,m] * Pmn[j,m,n]
+    return jnp.einsum("j,jm,jmn->mn", w, data, Pmn)
+
+
+def invrs_leg(legcoeff: jnp.ndarray, I: int, J: int, M: int, N: int, Pmn: jnp.ndarray) -> jnp.ndarray:
+    """Inverse Legendre transform: (m,n) -> full Fourier coeffs (J,I).
+
+    Layout matches SWAMPE:
+      - positive modes m=0..M placed in columns 0..M
+      - negative modes m=-M..-1 placed in columns I-M .. I-1
+    """
+    I = int(I)
+    J = int(J)
+    M = int(M)
+
+    # Positive m (0..M)
+    pos = jnp.einsum("jmn,mn->jm", Pmn, legcoeff)
+
+    # Negative m (-M..-1) from conjugate symmetry of real fields.
+    neg_m = jnp.einsum("jmn,mn->jm", Pmn[:, 1:, :], jnp.conj(legcoeff[1:, :]))
+    neg_rev = neg_m[:, ::-1]  # order columns as -M..-1
+
+    out_dtype = jnp.result_type(legcoeff, jnp.complex64)
+    approxXim = jnp.zeros((J, I), dtype=out_dtype)
+    approxXim = approxXim.at[:, 0 : M + 1].set(pos)
+    approxXim = approxXim.at[:, I - M : I].set(neg_rev)
+    return approxXim
+
 
 def invrsUV(
     deltamn: jnp.ndarray,
@@ -413,56 +256,20 @@ def invrsUV(
     tstepcoeffmn: jnp.ndarray,
     marray: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Compute U, V from spectral divergence/vorticity.
-    
-    Implements equations (5.24)-(5.25) from Hack and Jakob (1992).
-    
-    Parameters
-    ----------
-    deltamn : array (M+1, N+1)
-        Spectral coefficients of divergence
-    etamn : array (M+1, N+1)
-        Spectral coefficients of absolute vorticity
-    fmn : array (M+1, N+1)
-        Spectral coefficients of Coriolis parameter
-    I : int
-        Number of longitudes
-    J : int
-        Number of latitudes
-    M : int
-        Highest wavenumber
-    N : int
-        Highest degree of Legendre polynomials
-    Pmn : array (J, M+1, N+1)
-        Associated Legendre polynomials
-    Hmn : array (J, M+1, N+1)
-        H-derivatives of Legendre polynomials
-    tstepcoeffmn : array (M+1, N+1)
-        Time stepping coefficients a/(n(n+1))
-    marray : array (M+1, N+1)
-        Array of m values
-        
-    Returns
-    -------
-    Unew : array (J, I)
-        Zonal velocity
-    Vnew : array (J, I)
-        Meridional velocity
-    """
-    # Do not sum over n=0 (see Hack and Jakob 1992 equations 5.24-5.25)
-    deltamn0 = deltamn.at[:, 0].set(0.0)
-    etamn0 = etamn.at[:, 0].set(0.0)
+    """Compute U,V from spectral divergence/vorticity (diagnostic)."""
+    deltamn = deltamn.at[:, 0].set(0.0)
+    etamn = etamn.at[:, 0].set(0.0)
 
-    Um1 = invrs_leg((1j) * (marray * deltamn0) * tstepcoeffmn, I, J, M, N, Pmn)
-    Um2 = invrs_leg((etamn0 - fmn) * tstepcoeffmn, I, J, M, N, Hmn)
+    newUm1 = invrs_leg(1j * (marray * deltamn) * tstepcoeffmn, I, J, M, N, Pmn)
+    newUm2 = invrs_leg((etamn - fmn) * tstepcoeffmn, I, J, M, N, Hmn)
 
-    Vm1 = invrs_leg((1j) * (marray * (etamn0 - fmn)) * tstepcoeffmn, I, J, M, N, Pmn)
-    Vm2 = invrs_leg(deltamn0 * tstepcoeffmn, I, J, M, N, Hmn)
+    newVm1 = invrs_leg(1j * (marray * (etamn - fmn)) * tstepcoeffmn, I, J, M, N, Pmn)
+    newVm2 = invrs_leg(deltamn * tstepcoeffmn, I, J, M, N, Hmn)
 
-    Unew = -invrs_fft(Um1 - Um2, I)
-    Vnew = -invrs_fft(Vm1 + Vm2, I)
-    
+    Unew = -invrs_fft(newUm1 - newUm2, I)
+    Vnew = -invrs_fft(newVm1 + newVm2, I)
     return Unew, Vnew
+
 
 
 def diagnostic_eta_delta(
@@ -480,60 +287,24 @@ def diagnostic_eta_delta(
     mJarray: jnp.ndarray,
     dt: float,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute eta/delta from winds.
-    
-    Implements equations (5.26)-(5.27) from Hack and Jakob (1992).
-    
-    Parameters
-    ----------
-    Um : array (J, M+1)
-        Fourier coefficients of zonal wind
-    Vm : array (J, M+1)
-        Fourier coefficients of meridional wind
-    fmn : array (M+1, N+1)
-        Spectral Coriolis parameter
-    I : int
-        Number of longitudes
-    J : int
-        Number of latitudes
-    M : int
-        Highest wavenumber
-    N : int
-        Highest degree of Legendre polynomials
-    Pmn : array (J, M+1, N+1)
-        Associated Legendre polynomials
-    Hmn : array (J, M+1, N+1)
-        H-derivatives
-    w : array (J,)
-        Gauss-Legendre weights
-    tstepcoeff : array (J, M+1)
-        Time stepping coefficient 2dt/(a(1-mu^2))
-    mJarray : array (J, M+1)
-        Array of m values
-    dt : float
-        Time step
-        
-    Returns
-    -------
-    neweta : array (J, I)
-        Absolute vorticity in physical space
-    newdelta : array (J, I)
-        Divergence in physical space
-    etamn : array (M+1, N+1)
-        Spectral absolute vorticity
-    deltamn : array (M+1, N+1)
-        Spectral divergence
+    """Compute vorticity and divergence from wind Fourier coefficients (diagnostic).
+
+    Matches SWAMPE's `diagnostic_eta_delta`:
+      - Input Um/Vm are Fourier coefficients (J, M+1).
+      - Returns (eta, delta) in physical space and (etamn, deltamn) in spectral space.
     """
+    I = int(I)
+    J = int(J)
+    M = int(M)
+    N = int(N)
+
+    dt = jnp.asarray(dt, dtype=jnp.float64)
     coeff = tstepcoeff / (2.0 * dt)
 
-    zetamn = fwd_leg(coeff * (1j) * mJarray * Vm, J, M, N, Pmn, w) + fwd_leg(
-        coeff * Um, J, M, N, Hmn, w
-    )
+    zetamn = fwd_leg(coeff * (1j) * mJarray * Vm, J, M, N, Pmn, w) + fwd_leg(coeff * Um, J, M, N, Hmn, w)
     etamn = zetamn + fmn
 
-    deltamn = fwd_leg(coeff * (1j) * mJarray * Um, J, M, N, Pmn, w) - fwd_leg(
-        coeff * Vm, J, M, N, Hmn, w
-    )
+    deltamn = fwd_leg(coeff * (1j) * mJarray * Um, J, M, N, Pmn, w) - fwd_leg(coeff * Vm, J, M, N, Hmn, w)
 
     newdeltam = invrs_leg(deltamn, I, J, M, N, Pmn)
     newdelta = invrs_fft(newdeltam, I)

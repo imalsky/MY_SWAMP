@@ -135,7 +135,6 @@ def main(
         timeunits=str(timeunits),
         verbose=bool(verbose),
         K6Phi=K6Phi,
-        use_scipy_basis=bool(use_scipy_basis),
     )
 
 
@@ -241,7 +240,6 @@ def cli_main() -> None:
         timeunits=str(args.timeunits),
         verbose=bool(args.verbose),
         K6Phi=args.K6Phi,
-        use_scipy_basis=bool(args.use_scipy_basis),
     )
 
 
