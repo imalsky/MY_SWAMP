@@ -10,6 +10,52 @@ import numpy as onp
 import jax.numpy as jnp
 
 
+# ---------------------------- GRID HELPERS ----------------------------
+
+def _gauss_legendre_nodes_weights(J: int) -> Tuple[onp.ndarray, onp.ndarray]:
+    """Return (mus, w) using SciPy (preferred) or NumPy fallback.
+
+    Legacy SWAMPE uses ``scipy.special.roots_legendre``. We use SciPy when
+    available to maximize numerical parity; otherwise we fall back to
+    ``numpy.polynomial.legendre.leggauss``.
+    """
+    J_i = int(J)
+    try:
+        import scipy.special as sp  # type: ignore
+
+        mus_np, w_np = sp.roots_legendre(J_i)
+    except Exception:
+        mus_np, w_np = onp.polynomial.legendre.leggauss(J_i)
+
+    # Force float64 to match the legacy reference.
+    return onp.asarray(mus_np, dtype=onp.float64), onp.asarray(w_np, dtype=onp.float64)
+
+
+def build_lambdas(I: int, *, dtype=jnp.float64) -> jnp.ndarray:
+    """Build evenly spaced longitudes (lambda) of length I.
+
+    Matches legacy SWAMPE: ``np.linspace(-pi, pi, num=I, endpoint=False)``.
+    """
+    I_i = int(I)
+    lambdas_np = onp.linspace(-onp.pi, onp.pi, num=I_i, endpoint=False, dtype=onp.float64)
+    out = jnp.asarray(lambdas_np)
+    return out.astype(dtype)
+
+
+def build_mus(J: int, *, dtype=jnp.float64) -> jnp.ndarray:
+    """Build Gauss-Legendre latitudes (mu) of length J."""
+    mus_np, _w_np = _gauss_legendre_nodes_weights(J)
+    out = jnp.asarray(mus_np)
+    return out.astype(dtype)
+
+
+def build_w(J: int, *, dtype=jnp.float64) -> jnp.ndarray:
+    """Build Gauss-Legendre weights (w) of length J."""
+    _mus_np, w_np = _gauss_legendre_nodes_weights(J)
+    out = jnp.asarray(w_np)
+    return out.astype(dtype)
+
+
 # ---------------------------- BASIS BUILDING ----------------------------
 
 def _scaling_term(n: int, m: int) -> float:

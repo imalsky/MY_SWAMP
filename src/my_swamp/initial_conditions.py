@@ -93,14 +93,11 @@ def spectral_params(M: int):
         dt = 600
     else:
         raise ValueError(f'Unsupported value of M={M}. Only 42, 63, and 106 are supported')
-    
-    lambdas = jnp.linspace(-jnp.pi, jnp.pi, num=I, endpoint=False)
-    
-    # Use numpy for Gauss-Legendre quadrature (matching original scipy.special.roots_legendre)
-    mus_np, w_np = onp.polynomial.legendre.leggauss(J)
-    mus = jnp.asarray(mus_np)
-    w = jnp.asarray(w_np)
-    
+    from . import spectral_transform as st
+
+    lambdas = st.build_lambdas(I)
+    mus = st.build_mus(J)
+    w = st.build_w(J)
     return N, I, J, dt, lambdas, mus, w
 
 
