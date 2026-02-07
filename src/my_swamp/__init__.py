@@ -5,12 +5,13 @@ time-stepping core in JAX so it can be JIT-compiled and differentiated.
 
 Precision
 ---------
-The reference SWAMPE implementation is double precision. For numerical parity,
-this package enables JAX 64-bit mode by default. To disable, set:
+JAX defaults to float32, which is typically the right choice for GPU throughput.
+If you need double precision for numerical parity with the reference numpy
+SWAMPE implementation, set:
 
-    SWAMPE_JAX_ENABLE_X64=0
+    SWAMPE_JAX_ENABLE_X64=1
 
-before importing SWAMPE.
+*before* importing `my_swamp`.
 """
 
 from __future__ import annotations
@@ -19,13 +20,16 @@ import os as _os
 
 from ._version import __version__
 
-# Enable 64-bit for numerical parity with the reference numpy implementation.
-# Must run at import-time (before creating arrays / compiling).
+# Configure JAX precision at import time (before creating arrays / compiling).
+# We respect any user-provided JAX configuration. If the environment variable
+# SWAMPE_JAX_ENABLE_X64 is set, we apply it as an explicit override.
 try:
     from jax import config as _config
 
-    if _os.getenv("SWAMPE_JAX_ENABLE_X64", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
-        _config.update("jax_enable_x64", True)
+    _env_x64 = _os.getenv("SWAMPE_JAX_ENABLE_X64")
+    if _env_x64 is not None:
+        _enable_x64 = _env_x64.strip().lower() in {"1", "true", "yes", "y", "on"}
+        _config.update("jax_enable_x64", bool(_enable_x64))
 except Exception:
     # Allow static inspection/packaging environments where JAX isn't importable.
     pass
@@ -37,12 +41,11 @@ from . import filters
 from . import forcing
 from . import explicit_tdiff
 from . import modEuler_tdiff
-from . import plotting
 from . import time_stepping
 from . import model
 from . import main_function
 
-from .model import run_model
+from .model import run_model, run_model_gpu
 from .main_function import main
 
 __all__ = [
@@ -58,5 +61,22 @@ __all__ = [
     "model",
     "main_function",
     "run_model",
+    "run_model_gpu",
     "main",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy imports for heavy optional modules.
+
+    `my_swamp.plotting` pulls in matplotlib/imageio, which is expensive and
+    unnecessary for pure simulation workloads. Import on demand.
+    """
+
+    if name == "plotting":
+        from . import plotting as _plotting
+
+        # Cache on the module so subsequent accesses are cheap.
+        globals()["plotting"] = _plotting
+        return _plotting
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

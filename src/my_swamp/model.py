@@ -27,10 +27,12 @@ operations and are not meant to be differentiated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+from .dtypes import float_dtype
 import numpy as np
 
 import logging
@@ -40,7 +42,6 @@ from . import continuation
 from . import filters
 from . import forcing
 from . import initial_conditions
-from . import plotting
 from . import spectral_transform as st
 from . import time_stepping
 
@@ -71,7 +72,25 @@ def _warn_option_b_once(*, expflag: bool) -> None:
 def _is_python_scalar(x: Any) -> bool:
     return isinstance(x, (int, float, np.floating))
 
+def _tree_has_tracer(pytree: Any) -> bool:
+    """Return True if any leaf in `pytree` is a JAX tracer."""
+    for leaf in jax.tree_util.tree_leaves(pytree):
+        if isinstance(leaf, jax.core.Tracer):
+            return True
+    return False
 
+
+@lru_cache(maxsize=None)
+def _get_simulate_scan_jit(*, test: Optional[int], donate_state: bool):
+    """Get a cached jitted wrapper around `simulate_scan` for the given mode."""
+
+    def _fn(state0: State, t_seq: jnp.ndarray, static: Static, flags: RunFlags, Uic: jnp.ndarray, Vic: jnp.ndarray):
+        return simulate_scan(static=static, flags=flags, state0=state0, t_seq=t_seq, test=test, Uic=Uic, Vic=Vic)
+
+    return jax.jit(_fn, donate_argnums=(0,) if donate_state else ())
+
+
+@jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class RunFlags:
     forcflag: bool = True
@@ -82,6 +101,28 @@ class RunFlags:
     blowup_rms: Any = 8000.0
 
 
+    def tree_flatten(self):
+        children = (
+            jnp.asarray(self.alpha, dtype=float_dtype()),
+            jnp.asarray(self.blowup_rms, dtype=float_dtype()),
+        )
+        aux_data = (self.forcflag, self.diffflag, self.expflag, self.modalflag)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        forcflag, diffflag, expflag, modalflag = aux_data
+        alpha, blowup_rms = children
+        return cls(
+            forcflag=bool(forcflag),
+            diffflag=bool(diffflag),
+            expflag=bool(expflag),
+            modalflag=bool(modalflag),
+            alpha=alpha,
+            blowup_rms=blowup_rms,
+        )
+
+@jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class Static:
     M: int
@@ -118,6 +159,90 @@ class Static:
 
     Phieq: jnp.ndarray
 
+
+    def tree_flatten(self):
+        children = (
+            self.dt,
+            self.a,
+            self.omega,
+            self.g,
+            self.Phibar,
+            self.taurad,
+            self.taudrag,
+            self.lambdas,
+            self.mus,
+            self.w,
+            self.Pmn,
+            self.Hmn,
+            self.fmn,
+            self.tstepcoeff,
+            self.tstepcoeff2,
+            self.tstepcoeffmn,
+            self.marray,
+            self.mJarray,
+            self.narray,
+            self.sigma,
+            self.sigmaPhi,
+            self.Phieq,
+        )
+        aux_data = (self.M, self.N, self.I, self.J)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        M, N, I, J = aux_data
+        (
+            dt,
+            a,
+            omega,
+            g,
+            Phibar,
+            taurad,
+            taudrag,
+            lambdas,
+            mus,
+            w,
+            Pmn,
+            Hmn,
+            fmn,
+            tstepcoeff,
+            tstepcoeff2,
+            tstepcoeffmn,
+            marray,
+            mJarray,
+            narray,
+            sigma,
+            sigmaPhi,
+            Phieq,
+        ) = children
+        return cls(
+            M=int(M),
+            N=int(N),
+            I=int(I),
+            J=int(J),
+            dt=dt,
+            a=a,
+            omega=omega,
+            g=g,
+            Phibar=Phibar,
+            taurad=taurad,
+            taudrag=taudrag,
+            lambdas=lambdas,
+            mus=mus,
+            w=w,
+            Pmn=Pmn,
+            Hmn=Hmn,
+            fmn=fmn,
+            tstepcoeff=tstepcoeff,
+            tstepcoeff2=tstepcoeff2,
+            tstepcoeffmn=tstepcoeffmn,
+            marray=marray,
+            mJarray=mJarray,
+            narray=narray,
+            sigma=sigma,
+            sigmaPhi=sigmaPhi,
+            Phieq=Phieq,
+        )
 
 class State(NamedTuple):
     """Scan carry: all JAX arrays."""
@@ -179,13 +304,13 @@ def build_static(
     N, I, J, _, lambdas, mus, w = initial_conditions.spectral_params(int(M))
 
     # Keep scalars as JAX values to preserve differentiability.
-    dt_j = jnp.asarray(dt, dtype=jnp.float64)
-    a_j = jnp.asarray(a, dtype=jnp.float64)
-    omega_j = jnp.asarray(omega, dtype=jnp.float64)
-    g_j = jnp.asarray(g, dtype=jnp.float64)
-    Phibar_j = jnp.asarray(Phibar, dtype=jnp.float64)
-    taurad_j = jnp.asarray(taurad, dtype=jnp.float64)
-    taudrag_j = jnp.asarray(taudrag, dtype=jnp.float64)
+    dt_j = jnp.asarray(dt, dtype=float_dtype())
+    a_j = jnp.asarray(a, dtype=float_dtype())
+    omega_j = jnp.asarray(omega, dtype=float_dtype())
+    g_j = jnp.asarray(g, dtype=float_dtype())
+    Phibar_j = jnp.asarray(Phibar, dtype=float_dtype())
+    taurad_j = jnp.asarray(taurad, dtype=float_dtype())
+    taudrag_j = jnp.asarray(taudrag, dtype=float_dtype())
 
     Pmn, Hmn = st.PmnHmn(J, int(M), N, mus)
 
@@ -198,17 +323,17 @@ def build_static(
     mJarray = time_stepping.mJarray(J, int(M))
     narray = time_stepping.narray(int(M), N)
 
-    K6_j = jnp.asarray(K6, dtype=jnp.float64)
-    K6Phi_eff = K6_j if K6Phi is None else jnp.asarray(K6Phi, dtype=jnp.float64)
+    K6_j = jnp.asarray(K6, dtype=float_dtype())
+    K6Phi_eff = K6_j if K6Phi is None else jnp.asarray(K6Phi, dtype=float_dtype())
 
     sigma = filters.sigma6(int(M), N, K6_j, a_j, dt_j)
     sigmaPhi = filters.sigma6Phi(int(M), N, K6Phi_eff, a_j, dt_j)
 
     if test is None:
-        DPhieq_j = jnp.asarray(DPhieq, dtype=jnp.float64)
+        DPhieq_j = jnp.asarray(DPhieq, dtype=float_dtype())
         Phieq = forcing.Phieqfun(Phibar_j, DPhieq_j, lambdas, mus, I, J, g_j)
     else:
-        Phieq = jnp.zeros((J, I), dtype=jnp.float64)
+        Phieq = jnp.zeros((J, I), dtype=float_dtype())
 
     return Static(
         M=int(M),
@@ -258,7 +383,7 @@ def _forcing_phys(
         return PhiF, F, G
 
     J, I = static.J, static.I
-    z = jnp.zeros((J, I), dtype=jnp.float64)
+    z = jnp.zeros((J, I), dtype=float_dtype())
     return z, z, z
 
 
@@ -454,7 +579,7 @@ def _step_once(
 
         # Robert–Asselin / modal splitting affects diagnostics of the *current* level.
         do_ra = jnp.logical_and(jnp.asarray(flags.modalflag), t > 2)
-        alpha = jnp.asarray(flags.alpha, dtype=jnp.float64)
+        alpha = jnp.asarray(flags.alpha, dtype=float_dtype())
 
         def apply_ra(_: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
             eta_mid = state.eta_curr + alpha * (state.eta_prev - 2.0 * state.eta_curr + neweta)
@@ -584,6 +709,9 @@ def run_model_scan(
     Phi0_init: Optional[jnp.ndarray] = None,
     U0_init: Optional[jnp.ndarray] = None,
     V0_init: Optional[jnp.ndarray] = None,
+    # Performance knobs
+    jit_scan: bool = True,
+    donate_state: bool = False,
 ) -> Dict[str, Any]:
     """Differentiable full run returning time histories (JAX scan).
 
@@ -607,6 +735,10 @@ def run_model_scan(
     # Critical checks only when dt is a concrete Python scalar.
     if _is_python_scalar(dt) and float(dt) <= 0.0:
         raise ValueError("dt must be positive.")
+
+    # Ensure `test` is a Python int/None (needed for caching/jit).
+    if test is not None:
+        test = int(test)
 
     flags = RunFlags(
         forcflag=bool(forcflag),
@@ -662,9 +794,9 @@ def run_model_scan(
         if eta0_init is None or delta0_init is None or Phi0_init is None:
             raise ValueError("If providing explicit ICs, eta0_init, delta0_init, and Phi0_init must all be provided.")
 
-        eta0 = jnp.asarray(eta0_init, dtype=jnp.float64)
-        delta0 = jnp.asarray(delta0_init, dtype=jnp.float64)
-        Phi0 = jnp.asarray(Phi0_init, dtype=jnp.float64)
+        eta0 = jnp.asarray(eta0_init, dtype=float_dtype())
+        delta0 = jnp.asarray(delta0_init, dtype=float_dtype())
+        Phi0 = jnp.asarray(Phi0_init, dtype=float_dtype())
 
         expected_shape = (static.J, static.I)
         for name, arr in (("eta0_init", eta0), ("delta0_init", delta0), ("Phi0_init", Phi0)):
@@ -675,8 +807,8 @@ def run_model_scan(
             raise ValueError("Provide both U0_init and V0_init, or neither.")
 
         if U0_init is not None:
-            U0 = jnp.asarray(U0_init, dtype=jnp.float64)
-            V0 = jnp.asarray(V0_init, dtype=jnp.float64)
+            U0 = jnp.asarray(U0_init, dtype=float_dtype())
+            V0 = jnp.asarray(V0_init, dtype=float_dtype())
 
             for name, arr in (("U0_init", U0), ("V0_init", V0)):
                 if arr.shape != expected_shape:
@@ -734,9 +866,9 @@ def run_model_scan(
         if contTime is None:
             raise ValueError("contflag=True requires contTime.")
 
-        eta0 = jnp.asarray(continuation.read_pickle(f"eta-{contTime}", custompath=custompath), dtype=jnp.float64)
-        delta0 = jnp.asarray(continuation.read_pickle(f"delta-{contTime}", custompath=custompath), dtype=jnp.float64)
-        Phi0 = jnp.asarray(continuation.read_pickle(f"Phi-{contTime}", custompath=custompath), dtype=jnp.float64)
+        eta0 = jnp.asarray(continuation.read_pickle(f"eta-{contTime}", custompath=custompath), dtype=float_dtype())
+        delta0 = jnp.asarray(continuation.read_pickle(f"delta-{contTime}", custompath=custompath), dtype=float_dtype())
+        Phi0 = jnp.asarray(continuation.read_pickle(f"Phi-{contTime}", custompath=custompath), dtype=float_dtype())
 
         etam0 = st.fwd_fft_trunc(eta0, static.I, static.M)
         etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
@@ -775,7 +907,27 @@ def run_model_scan(
     )
 
     t_seq = jnp.arange(starttime_eff, tmax, dtype=jnp.int32)
-    last_state, outs = simulate_scan(static=static, flags=flags, state0=state0, t_seq=t_seq, test=test, Uic=Uic, Vic=Vic)
+    if jit_scan:
+        # JIT only the time-advancement. Static/basis construction and the
+        # initialization logic remain on the Python side so we don't repeatedly
+        # compile or stage out large constant-building graphs.
+        #
+        # IMPORTANT for differentiability:
+        #   Do NOT close over potentially-traced values (static/flags/Uic/Vic)
+        #   inside the jitted function. Instead, pass them as explicit arguments.
+        donate_eff = bool(donate_state) and (not _tree_has_tracer((state0, t_seq, static, flags, Uic, Vic)))
+        simulate_fn = _get_simulate_scan_jit(test=test, donate_state=donate_eff)
+        last_state, outs = simulate_fn(state0, t_seq, static, flags, Uic, Vic)
+    else:
+        last_state, outs = simulate_scan(
+            static=static,
+            flags=flags,
+            state0=state0,
+            t_seq=t_seq,
+            test=test,
+            Uic=Uic,
+            Vic=Vic,
+        )
 
     return dict(
         static=static,
@@ -818,6 +970,9 @@ def run_model(
     verbose: bool = True,
     *,
     K6Phi: Optional[float] = None,
+    # Performance knobs
+    jit_scan: bool = True,
+    as_numpy: bool = True,
 ) -> Dict[str, Any]:
     """Compatibility wrapper matching the original SWAMPE `model.run_model` signature.
 
@@ -851,35 +1006,65 @@ def run_model(
         custompath=custompath,
         contTime=contTime,
         timeunits=timeunits,
+        jit_scan=jit_scan,
     )
 
     static: Static = result["static"]
-    t_seq: np.ndarray = np.asarray(result["t_seq"])
+    t_seq_j = result["t_seq"]
     outs: Dict[str, Any] = result["outs"]
 
-    eta_hist = np.asarray(outs["eta"])
-    delta_hist = np.asarray(outs["delta"])
-    Phi_hist = np.asarray(outs["Phi"])
-    U_hist = np.asarray(outs["U"])
-    V_hist = np.asarray(outs["V"])
+    # If the caller wants NumPy (legacy behavior) or any Python-side output
+    # (saving/plotting), materialize histories on host.
+    need_host = bool(as_numpy or saveflag or plotflag)
+    if need_host:
+        t_seq = np.asarray(t_seq_j)
+        eta_hist = np.asarray(outs["eta"])
+        delta_hist = np.asarray(outs["delta"])
+        Phi_hist = np.asarray(outs["Phi"])
+        U_hist = np.asarray(outs["U"])
+        V_hist = np.asarray(outs["V"])
 
-    rms_hist = np.asarray(outs["rms"])
-    spin_min_hist = np.asarray(outs["spin_min"])
-    phi_min_hist = np.asarray(outs["phi_min"])
-    phi_max_hist = np.asarray(outs["phi_max"])
+        rms_hist = np.asarray(outs["rms"])
+        spin_min_hist = np.asarray(outs["spin_min"])
+        phi_min_hist = np.asarray(outs["phi_min"])
+        phi_max_hist = np.asarray(outs["phi_max"])
+    else:
+        t_seq = t_seq_j
+        eta_hist = outs["eta"]
+        delta_hist = outs["delta"]
+        Phi_hist = outs["Phi"]
+        U_hist = outs["U"]
+        V_hist = outs["V"]
+
+        rms_hist = outs["rms"]
+        spin_min_hist = outs["spin_min"]
+        phi_min_hist = outs["phi_min"]
+        phi_max_hist = outs["phi_max"]
 
     # Reconstruct "long arrays" in the legacy shape (tmax,2), filled where defined.
-    spinupdata = np.zeros((tmax, 2), dtype=float)
-    geopotdata = np.zeros((tmax, 2), dtype=float)
+    if need_host:
+        spinupdata = np.zeros((tmax, 2), dtype=float)
+        geopotdata = np.zeros((tmax, 2), dtype=float)
 
-    # Fill diagnostics for indices (t-1) where t is in t_seq.
-    for k, t in enumerate(t_seq):
-        idx = int(t) - 1
-        if 0 <= idx < tmax:
-            spinupdata[idx, 0] = float(spin_min_hist[k])
-            spinupdata[idx, 1] = float(rms_hist[k])
-            geopotdata[idx, 0] = float(phi_min_hist[k])
-            geopotdata[idx, 1] = float(phi_max_hist[k])
+        # Fill diagnostics for indices (t-1) where t is in t_seq.
+        for k, t in enumerate(t_seq):
+            idx = int(t) - 1
+            if 0 <= idx < tmax:
+                spinupdata[idx, 0] = float(spin_min_hist[k])
+                spinupdata[idx, 1] = float(rms_hist[k])
+                geopotdata[idx, 0] = float(phi_min_hist[k])
+                geopotdata[idx, 1] = float(phi_max_hist[k])
+    else:
+        # Pure JAX path (no host transfer): scatter the diagnostics into the
+        # legacy (tmax,2) arrays.
+        idx = t_seq_j - 1
+        spinupdata = jnp.zeros((tmax, 2), dtype=float_dtype())
+        geopotdata = jnp.zeros((tmax, 2), dtype=float_dtype())
+
+        spinupdata = spinupdata.at[idx, 0].set(spin_min_hist)
+        spinupdata = spinupdata.at[idx, 1].set(rms_hist)
+        geopotdata = geopotdata.at[idx, 0].set(phi_min_hist)
+        geopotdata = geopotdata.at[idx, 1].set(phi_max_hist)
 
     # Optional saving/plotting (legacy behavior).
     if saveflag:
@@ -900,6 +1085,9 @@ def run_model(
                 )
 
     if plotflag:
+        # Lazy import: plotting pulls in matplotlib/imageio, which is expensive
+        # and unnecessary for headless / HPC runs.
+        from . import plotting
         for k, t in enumerate(t_seq):
             if int(t) % int(plotfreq) == 0:
                 timestamp = continuation.compute_timestamp(timeunits, int(t), float(dt))
@@ -928,7 +1116,26 @@ def run_model(
         V=V_hist[-1] if V_hist.shape[0] else None,
         spinup=spinupdata,
         geopot=geopotdata,
-        lambdas=np.asarray(static.lambdas),
-        mus=np.asarray(static.mus),
+        lambdas=np.asarray(static.lambdas) if need_host else static.lambdas,
+        mus=np.asarray(static.mus) if need_host else static.mus,
         t_seq=t_seq,
     )
+def run_model_gpu(*args, **kwargs) -> Dict[str, Any]:
+    """GPU/AD-friendly wrapper around :func:`run_model`.
+
+    This preserves the legacy default behavior of :func:`run_model` (plotting,
+    saving, and host materialization) while providing a convenience entrypoint
+    with performance-oriented defaults.
+
+    Defaults applied when not explicitly provided by the caller:
+      - plotflag=False
+      - saveflag=False
+      - as_numpy=False
+      - jit_scan=True
+    """
+    kwargs = dict(kwargs)
+    kwargs.setdefault("plotflag", False)
+    kwargs.setdefault("saveflag", False)
+    kwargs.setdefault("as_numpy", False)
+    kwargs.setdefault("jit_scan", True)
+    return run_model(*args, **kwargs)

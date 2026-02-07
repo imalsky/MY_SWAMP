@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
+import jax
+from .dtypes import float_dtype
+
+_X64 = bool(jax.config.read('jax_enable_x64'))
+_ATOL = 1e-12 if _X64 else 1e-5
 
 from . import spectral_transform as st
 from . import initial_conditions as ic
@@ -37,8 +42,8 @@ def test_Pmn_Hmn() -> None:
     Pmncheck = 0.25 * np.sqrt(15.0) * (1.0 - mus_np**2)
     Hmncheck = 0.5 * np.sqrt(6.0) * (1.0 - mus_np**2)
 
-    assert np.allclose(np.asarray(Pmn)[:, 2, 2], Pmncheck, atol=1e-12), "Pmn[:,2,2] mismatch"
-    assert np.allclose(np.asarray(Hmn)[:, 0, 1], Hmncheck, atol=1e-12), "Hmn[:,0,1] mismatch"
+    assert np.allclose(np.asarray(Pmn)[:, 2, 2], Pmncheck, atol=_ATOL), "Pmn[:,2,2] mismatch"
+    assert np.allclose(np.asarray(Hmn)[:, 0, 1], Hmncheck, atol=_ATOL), "Hmn[:,0,1] mismatch"
 
 
 def test_spectral_transform() -> None:
@@ -48,15 +53,15 @@ def test_spectral_transform() -> None:
     Pmn, _Hmn = st.PmnHmn(J, M, N, mus)
 
     # f(j,i) = 2*omega*mu(j) (constant in longitude)
-    f = (2.0 * omega) * mus[:, None] * jnp.ones((1, I), dtype=jnp.float64)
+    f = (2.0 * omega) * mus[:, None] * jnp.ones((1, I), dtype=float_dtype())
 
     fm = st.fwd_fft_trunc(f, I, M)
     fmn = st.fwd_leg(fm, J, M, N, Pmn, w)
 
-    fmncheck = np.zeros((M + 1, N + 1), dtype=np.complex128)
+    fmncheck = np.zeros((M + 1, N + 1), dtype=(np.complex128 if _X64 else np.complex64))
     fmncheck[0, 1] = omega / np.sqrt(0.375)
 
-    assert np.allclose(np.asarray(fmn), fmncheck, atol=1e-12), "fmn mismatch"
+    assert np.allclose(np.asarray(fmn), fmncheck, atol=_ATOL), "fmn mismatch"
 
 
 def test_spectral_transform_forward_inverse() -> None:
@@ -81,7 +86,7 @@ def test_spectral_transform_forward_inverse() -> None:
     Uicmnew = st.invrs_leg(Uicmn, I, J, M, N, Pmn)
     Uicnew = st.invrs_fft(Uicmnew, I)
 
-    assert np.allclose(np.asarray(Uic), np.asarray(Uicnew), atol=1e-11), "forward+inverse mismatch"
+    assert np.allclose(np.asarray(Uic), np.asarray(Uicnew), atol=_ATOL), "forward+inverse mismatch"
 
 
 def test_wind_transform() -> None:
@@ -97,7 +102,7 @@ def test_wind_transform() -> None:
     N, I, J, _dt, lambdas, mus, w = ic.spectral_params(M)
     Pmn, Hmn = st.PmnHmn(J, M, N, mus)
 
-    fmn = jnp.zeros((M + 1, N + 1), dtype=jnp.float64).at[0, 1].set(omega / jnp.sqrt(0.375))
+    fmn = jnp.zeros((M + 1, N + 1), dtype=float_dtype()).at[0, 1].set(omega / jnp.sqrt(0.375))
 
     tstepcoeffmn = tstep.tstepcoeffmn(M, N, a)
     tstepcoeff = tstep.tstepcoeff(J, M, dt, mus, a)
@@ -119,8 +124,8 @@ def test_wind_transform() -> None:
 
     Unew, Vnew = st.invrsUV(deltamnnew, etamnnew, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
 
-    assert np.allclose(np.asarray(U), np.asarray(Unew), atol=1e-11), "U error too high"
-    assert np.allclose(np.asarray(V), np.asarray(Vnew), atol=1e-11), "V error too high"
+    assert np.allclose(np.asarray(U), np.asarray(Unew), atol=_ATOL), "U error too high"
+    assert np.allclose(np.asarray(V), np.asarray(Vnew), atol=_ATOL), "V error too high"
 
 
 def test_vorticity_divergence_transform() -> None:
@@ -136,7 +141,7 @@ def test_vorticity_divergence_transform() -> None:
     N, I, J, _dt, lambdas, mus, w = ic.spectral_params(M)
     Pmn, Hmn = st.PmnHmn(J, M, N, mus)
 
-    fmn = jnp.zeros((M + 1, N + 1), dtype=jnp.float64).at[0, 1].set(omega / jnp.sqrt(0.375))
+    fmn = jnp.zeros((M + 1, N + 1), dtype=float_dtype()).at[0, 1].set(omega / jnp.sqrt(0.375))
 
     tstepcoeffmn = tstep.tstepcoeffmn(M, N, a)
     tstepcoeff = tstep.tstepcoeff(J, M, dt, mus, a)
@@ -163,8 +168,8 @@ def test_vorticity_divergence_transform() -> None:
         Um, Vm, fmn, I, J, M, N, Pmn, Hmn, w, tstepcoeff, mJarray, dt
     )
 
-    assert np.allclose(np.asarray(etaic0), np.asarray(etanew), atol=1e-11), "eta error too high"
-    assert np.allclose(np.asarray(deltaic0), np.asarray(deltanew), atol=1e-11), "delta error too high"
+    assert np.allclose(np.asarray(etaic0), np.asarray(etanew), atol=_ATOL), "eta error too high"
+    assert np.allclose(np.asarray(deltaic0), np.asarray(deltanew), atol=_ATOL), "delta error too high"
 
 
 if __name__ == "__main__":

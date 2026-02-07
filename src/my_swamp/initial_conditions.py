@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import jax.numpy as jnp
+from .dtypes import float_dtype
 
 from . import spectral_transform as st
 
@@ -21,9 +22,9 @@ def test1_init(a: float, omega: float, a1: float) -> Tuple[float, float, float, 
     Returns:
         SU0, sina, cosa, etaamp, Phiamp
     """
-    a = jnp.asarray(a, dtype=jnp.float64)
-    omega = jnp.asarray(omega, dtype=jnp.float64)
-    a1 = jnp.asarray(a1, dtype=jnp.float64)
+    a = jnp.asarray(a, dtype=float_dtype())
+    omega = jnp.asarray(omega, dtype=float_dtype())
+    a1 = jnp.asarray(a1, dtype=float_dtype())
 
     SU0 = 2.0 * jnp.pi * a / (3600.0 * 24.0 * 12.0)
     sina = jnp.sin(a1)
@@ -57,8 +58,8 @@ def spectral_params(M: int):
     else:
         raise ValueError(f"Unsupported value of M={M}. Only 42, 63, and 106 are supported.")
 
-    lambdas = st.build_lambdas(I, dtype=jnp.float64)
-    mus, w = st.gauss_legendre(J, dtype=jnp.float64)
+    lambdas = st.build_lambdas(I, dtype=float_dtype())
+    mus, w = st.gauss_legendre(J, dtype=float_dtype())
     return N, I, J, dt, lambdas, mus, w
 
 
@@ -80,24 +81,24 @@ def state_var_init(
     I = int(I)
     J = int(J)
 
-    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]          # (J,1)
-    lam = jnp.asarray(lambdas, dtype=jnp.float64)[None, :]     # (1,I)
+    mu = jnp.asarray(mus, dtype=float_dtype())[:, None]          # (J,1)
+    lam = jnp.asarray(lambdas, dtype=float_dtype())[None, :]     # (1,I)
     sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
 
-    etaamp = jnp.asarray(etaamp, dtype=jnp.float64)
+    etaamp = jnp.asarray(etaamp, dtype=float_dtype())
 
-    deltaic0 = jnp.zeros((J, I), dtype=jnp.float64)
-    Phiic0 = jnp.zeros((J, I), dtype=jnp.float64)
+    deltaic0 = jnp.zeros((J, I), dtype=float_dtype())
+    Phiic0 = jnp.zeros((J, I), dtype=float_dtype())
 
     if test is not None:
         if len(args) != 5:
             raise ValueError("For test!=None, expected args=(a,sina,cosa,Phibar,Phiamp).")
         a, sina, cosa, Phibar, Phiamp = args
-        a = jnp.asarray(a, dtype=jnp.float64)
-        sina = jnp.asarray(sina, dtype=jnp.float64)
-        cosa = jnp.asarray(cosa, dtype=jnp.float64)
-        Phibar = jnp.asarray(Phibar, dtype=jnp.float64)
-        Phiamp = jnp.asarray(Phiamp, dtype=jnp.float64)
+        a = jnp.asarray(a, dtype=float_dtype())
+        sina = jnp.asarray(sina, dtype=float_dtype())
+        cosa = jnp.asarray(cosa, dtype=float_dtype())
+        Phibar = jnp.asarray(Phibar, dtype=float_dtype())
+        Phiamp = jnp.asarray(Phiamp, dtype=float_dtype())
 
     if test == 1:
         # Test 1: cosine bell bump in geopotential, vorticity set by solid-body rotation tilt
@@ -150,13 +151,13 @@ def velocity_init(
     I = int(I)
     J = int(J)
 
-    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]
-    lam = jnp.asarray(lambdas, dtype=jnp.float64)[None, :]
+    mu = jnp.asarray(mus, dtype=float_dtype())[:, None]
+    lam = jnp.asarray(lambdas, dtype=float_dtype())[None, :]
     sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
 
-    SU0 = jnp.asarray(SU0, dtype=jnp.float64)
-    cosa = jnp.asarray(cosa, dtype=jnp.float64)
-    sina = jnp.asarray(sina, dtype=jnp.float64)
+    SU0 = jnp.asarray(SU0, dtype=float_dtype())
+    cosa = jnp.asarray(cosa, dtype=float_dtype())
+    sina = jnp.asarray(sina, dtype=float_dtype())
 
     if test == 1:
         Uic = SU0 * (sqrt_1m * cosa + mu * jnp.cos(lam) * sina) * sqrt_1m
@@ -165,8 +166,8 @@ def velocity_init(
         Uic = SU0 * (sqrt_1m * cosa + jnp.cos(lam) * mu * sina)
         Vic = -SU0 * (jnp.sin(lam) * sina)
     else:
-        Uic = jnp.zeros((J, I), dtype=jnp.float64)
-        Vic = jnp.zeros((J, I), dtype=jnp.float64)
+        Uic = jnp.zeros((J, I), dtype=float_dtype())
+        Vic = jnp.zeros((J, I), dtype=float_dtype())
 
     return Uic, Vic
 
@@ -188,7 +189,7 @@ def ABCDE_init(
     I = int(I)
     J = int(J)
 
-    mu = jnp.asarray(mus, dtype=jnp.float64)[:, None]
+    mu = jnp.asarray(mus, dtype=float_dtype())[:, None]
     denom = 2.0 * (1.0 - mu**2)
 
     Aic = Uic * etaic0
@@ -205,7 +206,7 @@ def coriolismn(M: int, omega: float) -> jnp.ndarray:
     Initializes the Coriolis parameter in spectral space.
     """
     M = int(M)
-    omega = jnp.asarray(omega, dtype=jnp.float64)
-    fmn = jnp.zeros((M + 1, M + 1), dtype=jnp.float64)
+    omega = jnp.asarray(omega, dtype=float_dtype())
+    fmn = jnp.zeros((M + 1, M + 1), dtype=float_dtype())
     fmn = fmn.at[0, 1].set(omega / jnp.sqrt(0.375))
     return fmn

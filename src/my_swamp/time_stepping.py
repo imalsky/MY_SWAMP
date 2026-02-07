@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from .dtypes import float_dtype
 
 from . import explicit_tdiff as exp_tdiff
 from . import modEuler_tdiff as mod_tdiff
@@ -202,7 +203,7 @@ def tstepping(
 
 
 def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
-    n = jnp.arange(N + 1, dtype=jnp.float64)
+    n = jnp.arange(N + 1, dtype=float_dtype())
     coeff = n * (n + 1)
     coeff = coeff.at[0].set(1.0)
     tstep = a / coeff
@@ -211,11 +212,11 @@ def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
 
 
 def tstepcoeff2(J: int, M: int, dt: float, a: float) -> jnp.ndarray:
-    return jnp.ones((J, M + 1), dtype=jnp.float64) * (2.0 * dt / (a**2))
+    return jnp.ones((J, M + 1), dtype=float_dtype()) * (2.0 * dt / (a**2))
 
 
 def narray(M: int, N: int) -> jnp.ndarray:
-    n = jnp.arange(N + 1, dtype=jnp.float64)
+    n = jnp.arange(N + 1, dtype=float_dtype())
     nnp1 = n * (n + 1)
     return jnp.tile(nnp1[None, :], (M + 1, 1))
 
@@ -228,12 +229,12 @@ def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.nda
 
 
 def mJarray(J: int, M: int) -> jnp.ndarray:
-    m = jnp.arange(M + 1, dtype=jnp.float64)[None, :]
+    m = jnp.arange(M + 1, dtype=float_dtype())[None, :]
     return jnp.tile(m, (J, 1))
 
 
 def marray(M: int, N: int) -> jnp.ndarray:
-    m = jnp.arange(M + 1, dtype=jnp.float64)[:, None]
+    m = jnp.arange(M + 1, dtype=float_dtype())[:, None]
     return jnp.tile(m, (1, N + 1))
 
 

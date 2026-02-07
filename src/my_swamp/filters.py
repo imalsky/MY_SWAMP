@@ -5,6 +5,7 @@ Matches the original SWAMPE numpy implementation.
 from __future__ import annotations
 
 import jax.numpy as jnp
+from .dtypes import float_dtype
 
 
 def modal_splitting(Xidataslice: jnp.ndarray, alpha: float) -> jnp.ndarray:
@@ -38,7 +39,7 @@ def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
     
     CORRECTED: Uses original implicit filter formulation.
     """
-    nvec = jnp.arange(N + 1, dtype=jnp.float64)
+    nvec = jnp.arange(N + 1, dtype=float_dtype())
     ncoeff = (nvec * nvec / a**2) * ((nvec + 1) * (nvec + 1) / a**2)
     factor1 = 4 / a**4
     factor2 = 2 * dt * K4
@@ -57,7 +58,7 @@ def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
     
     Uses original implicit filter formulation (no factor1 subtraction).
     """
-    nvec = jnp.arange(N + 1, dtype=jnp.float64)
+    nvec = jnp.arange(N + 1, dtype=float_dtype())
     ncoeff = (nvec * nvec / a**2) * ((nvec + 1) * (nvec + 1) / a**2)
     factor2 = 2 * dt * K4
     
@@ -74,7 +75,7 @@ def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     
     Uses original implicit filter formulation.
     """
-    nvec = jnp.arange(N + 1, dtype=jnp.float64)
+    nvec = jnp.arange(N + 1, dtype=float_dtype())
     
     # n^3 * (n+1)^3 / a^6
     ncoeff = ((nvec * nvec * nvec) / a**3) * (((nvec + 1) * (nvec + 1) * (nvec + 1)) / a**3)
@@ -93,7 +94,7 @@ def sigma6Phi(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     
     Uses original implicit filter formulation (no factor1 subtraction).
     """
-    nvec = jnp.arange(N + 1, dtype=jnp.float64)
+    nvec = jnp.arange(N + 1, dtype=float_dtype())
     
     ncoeff = ((nvec * nvec * nvec) / a**3) * (((nvec + 1) * (nvec + 1) * (nvec + 1)) / a**3)
     factor2 = 2 * dt * K6

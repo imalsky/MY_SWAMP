@@ -15,9 +15,17 @@ Conventions (matches the reference numpy SWAMPE):
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
+
+import hashlib
+import math
+
+import numpy as np
+
+import jax
 
 import jax.numpy as jnp
+from .dtypes import float_dtype
 from jax.scipy.special import gammaln
 
 # -----------------------------------------------------------------------------
@@ -26,59 +34,96 @@ from jax.scipy.special import gammaln
 # NOTE: Pmn/Hmn are uniquely determined by (J,M,N,dtype) for canonical Gaussian
 # nodes returned by `gauss_legendre(J)`. If you pass custom `mus`, disable caching.
 _GL_CACHE: Dict[Tuple[int, str], Tuple[jnp.ndarray, jnp.ndarray]] = {}
-_PMN_CACHE: Dict[Tuple[int, int, int, str], Tuple[jnp.ndarray, jnp.ndarray]] = {}
+# Include a hash of `mus` in the cache key to avoid returning an incorrect basis
+# when users pass custom quadrature nodes.
+_PMN_CACHE: Dict[Tuple[int, int, int, str, str], Tuple[jnp.ndarray, jnp.ndarray]] = {}
 
 
-def build_lambdas(I: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+def _is_tracer(x) -> bool:
+    """Return True if `x` is a JAX tracer.
+
+    This module caches precomputed quadrature/basis arrays in module-level dicts
+    for performance.
+
+    If the builder functions are called *inside* a `jax.jit` trace (common under
+    NumPyro's HMC), the computed values can be tracers. Caching tracers can lead
+    to subtle failures (e.g., returning invalid objects outside the trace) and/or
+    memory leaks.
+
+    We therefore only cache *concrete* arrays.
+    """
+
+    return isinstance(x, jax.core.Tracer)
+
+
+def build_lambdas(I: int, *, dtype: Optional[jnp.dtype] = None) -> jnp.ndarray:
     """Evenly spaced longitudes in [-pi, pi) of length I (legacy convention)."""
+    dtype = float_dtype() if dtype is None else dtype
     return jnp.linspace(-jnp.pi, jnp.pi, num=int(I), endpoint=False, dtype=dtype)
 
 
-def gauss_legendre(J: int, *, dtype: jnp.dtype = jnp.float64) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def gauss_legendre(J: int, *, dtype: Optional[jnp.dtype] = None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Return Gauss–Legendre nodes and weights on [-1, 1] (J-point quadrature).
 
     SciPy-free replacement for `scipy.special.roots_legendre(J)`.
     Uses Golub–Welsch (Jacobi matrix eigen-decomposition).
     """
+    dtype = float_dtype() if dtype is None else dtype
     J = int(J)
     key = (J, jnp.dtype(dtype).name)
     cached = _GL_CACHE.get(key)
     if cached is not None:
-        return cached
+        mus, w = cached
+        if not (_is_tracer(mus) or _is_tracer(w)):
+            return mus, w
+        # Defensive: drop any previously cached tracer values.
+        _GL_CACHE.pop(key, None)
 
-    i = jnp.arange(1, J, dtype=dtype)
-    beta = i / jnp.sqrt(4.0 * i * i - 1.0)
+    # Fast path (recommended): compute nodes/weights on host with NumPy.
+    # This avoids many tiny JAX dispatches during initialization, and is also
+    # friendlier when the default JAX platform is GPU.
+    try:
+        mus_np, w_np = np.polynomial.legendre.leggauss(J)
+        mus = jnp.asarray(mus_np, dtype=dtype)
+        w = jnp.asarray(w_np, dtype=dtype)
+    except Exception:
+        # Fallback: SciPy-free Golub–Welsch in JAX.
+        i = jnp.arange(1, J, dtype=dtype)
+        beta = i / jnp.sqrt(4.0 * i * i - 1.0)
 
-    # Dense symmetric Jacobi matrix.
-    Jmat = jnp.diag(beta, 1) + jnp.diag(beta, -1)
+        # Dense symmetric Jacobi matrix.
+        Jmat = jnp.diag(beta, 1) + jnp.diag(beta, -1)
 
-    eigvals, eigvecs = jnp.linalg.eigh(Jmat)  # ascending
-    mus = eigvals.astype(dtype)
-    w = (2.0 * (eigvecs[0, :] ** 2)).astype(dtype)
+        eigvals, eigvecs = jnp.linalg.eigh(Jmat)  # ascending
+        mus = eigvals.astype(dtype)
+        w = (2.0 * (eigvecs[0, :] ** 2)).astype(dtype)
 
-    _GL_CACHE[key] = (mus, w)
+    # Only cache concrete arrays; never cache tracers produced inside a JIT trace.
+    if not (_is_tracer(mus) or _is_tracer(w)):
+        _GL_CACHE[key] = (mus, w)
     return mus, w
 
 
-def roots_legendre(J: int, *, dtype: jnp.dtype = jnp.float64) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def roots_legendre(J: int, *, dtype: Optional[jnp.dtype] = None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Legacy-compatible alias for Gauss–Legendre nodes/weights."""
     return gauss_legendre(J, dtype=dtype)
 
 
-def build_mus(J: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+def build_mus(J: int, *, dtype: Optional[jnp.dtype] = None) -> jnp.ndarray:
     """Legacy helper: return Gauss–Legendre nodes."""
     mus, _ = gauss_legendre(J, dtype=dtype)
     return mus
 
 
-def build_w(J: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+def build_w(J: int, *, dtype: Optional[jnp.dtype] = None) -> jnp.ndarray:
     """Legacy helper: return Gauss–Legendre weights."""
     _, w = gauss_legendre(J, dtype=dtype)
     return w
 
 
-def _scaling_table(M: int, N: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.ndarray:
+def _scaling_table(M: int, N: int, *, dtype: Optional[jnp.dtype] = None) -> jnp.ndarray:
     """Legacy scaling: sqrt((2n+1)/2 * (n-m)!/(n+m)!)."""
+    dtype = float_dtype() if dtype is None else dtype
     m = jnp.arange(M + 1, dtype=dtype)[:, None]
     n = jnp.arange(N + 1, dtype=dtype)[None, :]
     valid = n >= m
@@ -96,8 +141,99 @@ def _scaling_table(M: int, N: int, *, dtype: jnp.dtype = jnp.float64) -> jnp.nda
     return scale.astype(dtype)
 
 
+def _mus_digest(mus_np: np.ndarray) -> str:
+    """Stable short hash for cache keys.
+
+    The cache avoids recomputing expensive bases during repeated runs, but we
+    must not return a basis computed on different quadrature nodes.
+    """
+
+    mus_np = np.ascontiguousarray(mus_np)
+    return hashlib.sha1(mus_np.tobytes()).hexdigest()[:16]
+
+
+def _scaling_table_numpy(M: int, N: int, *, dtype: np.dtype) -> np.ndarray:
+    """NumPy version of the SWAMPE scaling table.
+
+    This is used as an initialization fast-path outside of JIT tracing.
+    Sizes are small (<= 107x107), so explicit Python loops are acceptable and
+    avoid a hard SciPy dependency.
+    """
+
+    scale = np.zeros((M + 1, N + 1), dtype=dtype)
+    for m in range(M + 1):
+        for n in range(m, N + 1):
+            # sqrt((2n+1)/2 * (n-m)!/(n+m)!)
+            log_ratio = math.lgamma(n - m + 1.0) - math.lgamma(n + m + 1.0)
+            scale[m, n] = math.sqrt(((2.0 * n + 1.0) / 2.0) * math.exp(log_ratio))
+    return scale
+
+
+def _PmnHmn_numpy(J: int, M: int, N: int, mus_np: np.ndarray, *, dtype: np.dtype) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute (Pmn,Hmn) on host with NumPy.
+
+    This mirrors the JAX recurrence exactly, but avoids thousands of tiny JAX
+    dispatches during model initialization.
+    """
+
+    x = np.asarray(mus_np, dtype=dtype)
+    if x.ndim != 1 or x.shape[0] != J:
+        raise ValueError(f"mus must have shape ({J},), got {x.shape}")
+
+    # Unscaled P^m_n(x) including CS phase, stored as (m,n,j).
+    P = np.zeros((M + 1, N + 1, J), dtype=dtype)
+    P[0, 0, :] = 1.0
+
+    # m=0 Legendre polynomials.
+    if N >= 1:
+        P[0, 1, :] = x
+    for n in range(2, N + 1):
+        P[0, n, :] = ((2 * n - 1) * x * P[0, n - 1, :] - (n - 1) * P[0, n - 2, :]) / n
+
+    sqrt_1mx2 = np.sqrt(np.maximum(0.0, 1.0 - x * x))
+
+    # m>=1 via standard recurrences.
+    for m in range(1, M + 1):
+        P[m, m, :] = -(2 * m - 1) * sqrt_1mx2 * P[m - 1, m - 1, :]
+        if m < N:
+            P[m, m + 1, :] = (2 * m + 1) * x * P[m, m, :]
+        for n in range(m + 2, N + 1):
+            P[m, n, :] = ((2 * n - 1) * x * P[m, n - 1, :] - (n + m - 1) * P[m, n - 2, :]) / (n - m)
+
+    # H = (1-x^2) dP/dx via identity:
+    #   (1-x^2) dP^m_n/dx = (n+m) P^m_{n-1} - n x P^m_n
+    H = np.zeros_like(P)
+    H[0, 0, :] = 0.0
+    for n in range(1, N + 1):
+        H[0, n, :] = n * P[0, n - 1, :] - n * x * P[0, n, :]
+
+    for m in range(1, M + 1):
+        H[m, m, :] = -m * x * P[m, m, :]
+        for n in range(m + 1, N + 1):
+            H[m, n, :] = (n + m) * P[m, n - 1, :] - n * x * P[m, n, :]
+
+    # Remove CS phase (match SWAMPE): flip odd m.
+    for m in range(1, M + 1, 2):
+        P[m, :, :] *= -1.0
+        H[m, :, :] *= -1.0
+
+    # Apply SWAMPE scaling.
+    scale = _scaling_table_numpy(M, N, dtype=dtype)
+    P *= scale[:, :, None]
+    H *= scale[:, :, None]
+
+    Pmn = np.transpose(P, (2, 0, 1))
+    Hmn = np.transpose(H, (2, 0, 1))
+    return Pmn, Hmn
+
+
 def PmnHmn(
-    J: int, M: int, N: int, mus: jnp.ndarray, *, dtype: jnp.dtype = jnp.float64
+    J: int,
+    M: int,
+    N: int,
+    mus: jnp.ndarray,
+    *,
+    dtype: Optional[jnp.dtype] = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute scaled associated Legendre basis Pmn and Hmn.
 
@@ -110,15 +246,38 @@ def PmnHmn(
         then flip odd m to match SWAMPE (i.e., remove the CS phase).
       - Apply the SWAMPE scaling factor sqrt((2n+1)/2 * (n-m)!/(n+m)!).
     """
+    dtype = float_dtype() if dtype is None else dtype
     J = int(J)
     M = int(M)
     N = int(N)
 
-    key = (J, M, N, jnp.dtype(dtype).name)
-    cached = _PMN_CACHE.get(key)
-    if cached is not None:
-        return cached
+    # If mus is concrete, compute a digest so caching is safe even for custom nodes.
+    # If mus is a tracer (called from inside jax.jit), skip caching and use the
+    # pure-JAX recurrence.
+    mus_is_tracer = _is_tracer(mus)
+    digest = ""
+    if not mus_is_tracer:
+        digest = _mus_digest(np.asarray(mus, dtype=np.float64))
+        key = (J, M, N, jnp.dtype(dtype).name, digest)
+        cached = _PMN_CACHE.get(key)
+        if cached is not None:
+            Pmn, Hmn = cached
+            if not (_is_tracer(Pmn) or _is_tracer(Hmn)):
+                return Pmn, Hmn
+            _PMN_CACHE.pop(key, None)
 
+        # Host fast-path: compute basis with NumPy recurrences, then transfer.
+        dtype_np = np.dtype(jnp.dtype(dtype).name)
+        Pmn_np, Hmn_np = _PmnHmn_numpy(J, M, N, np.asarray(mus), dtype=dtype_np)
+        Pmn = jnp.asarray(Pmn_np, dtype=dtype)
+        Hmn = jnp.asarray(Hmn_np, dtype=dtype)
+
+        # Only cache concrete arrays; never cache tracers produced inside a JIT trace.
+        if not (_is_tracer(Pmn) or _is_tracer(Hmn)):
+            _PMN_CACHE[key] = (Pmn, Hmn)
+        return Pmn, Hmn
+
+    # Tracer path: stay in JAX (differentiable + JIT traceable).
     x = jnp.asarray(mus, dtype=dtype)
     if x.ndim != 1 or x.shape[0] != J:
         raise ValueError(f"mus must have shape ({J},), got {x.shape}")
@@ -145,7 +304,9 @@ def PmnHmn(
             P = P.at[m, m + 1, :].set((2 * m + 1) * x * P_mm)
 
         for n in range(m + 2, N + 1):
-            P_mn = ((2 * n - 1) * x * P[m, n - 1, :] - (n + m - 1) * P[m, n - 2, :]) / (n - m)
+            P_mn = (
+                (2 * n - 1) * x * P[m, n - 1, :] - (n + m - 1) * P[m, n - 2, :]
+            ) / (n - m)
             P = P.at[m, n, :].set(P_mn)
 
     # H = (1-x^2) dP/dx computed from the stable identity:
@@ -180,7 +341,7 @@ def PmnHmn(
     Pmn = jnp.transpose(P, (2, 0, 1))
     Hmn = jnp.transpose(H, (2, 0, 1))
 
-    _PMN_CACHE[key] = (Pmn, Hmn)
+    # Tracer path: never cache, because the output can be a traced value.
     return Pmn, Hmn
 
 
@@ -271,7 +432,6 @@ def invrsUV(
     return Unew, Vnew
 
 
-
 def diagnostic_eta_delta(
     Um: jnp.ndarray,
     Vm: jnp.ndarray,
@@ -298,7 +458,7 @@ def diagnostic_eta_delta(
     M = int(M)
     N = int(N)
 
-    dt = jnp.asarray(dt, dtype=jnp.float64)
+    dt = jnp.asarray(dt, dtype=float_dtype())
     coeff = tstepcoeff / (2.0 * dt)
 
     zetamn = fwd_leg(coeff * (1j) * mJarray * Vm, J, M, N, Pmn, w) + fwd_leg(coeff * Um, J, M, N, Hmn, w)
