@@ -52,18 +52,19 @@ _LOGGER = logging.getLogger(__name__)
 _WARNED_OPTION_B = False
 
 
-def _warn_option_b_once(*, expflag: bool) -> None:
+def _warn_option_b_once(*, expflag: bool, legacy_modeuler_scaling: bool) -> None:
     """Emit a loud one-time warning that this build is Option B (corrected physics)."""
     global _WARNED_OPTION_B
     if _WARNED_OPTION_B:
         return
     _WARNED_OPTION_B = True
     msg = (
-        "SWAMPE-JAX OPTION B (corrected physics): this build intentionally departs from historical SWAMPE "
-        "trajectories. Modified-Euler (expflag=False) uses mathematically consistent dt scaling (tstepcoeff1/2, "
-        "tstepcoeff2/2) uniformly; historical SWAMPE effectively used tstepcoeff1/4 for phi/delta and inconsistent "
-        "scaling for forced eta. Explicit mode (expflag=True) includes bug fixes (divergence update completeness and "
-        "Rayleigh-drag double-counting). DO NOT EXPECT output parity with numpy SWAMPE; validate and tune accordingly."
+        "SWAMPE-JAX: this is a JAX rewrite and can differ from numpy SWAMPE. "
+        "Key parity knob for modified-Euler (expflag=False): set legacy_modeuler_scaling=True to emulate "
+        "historical SWAMPE's dt-scaling quirks (phi/delta double-halving to ~tstepcoeff/4; forced eta used "
+        "unscaled tstepcoeff1). With legacy_modeuler_scaling=False, the scheme uses a consistent single "
+        "conversion (tstepcoeff/2) and trajectories will generally differ. Explicit mode (expflag=True) still "
+        "includes bug fixes relative to historical SWAMPE."
     )
     _LOGGER.warning(msg)
     warnings.warn(msg, UserWarning, stacklevel=2)
@@ -96,6 +97,7 @@ class RunFlags:
     forcflag: bool = True
     diffflag: bool = True
     expflag: bool = False
+    legacy_modeuler_scaling: bool = False
     modalflag: bool = True
     alpha: Any = 0.01
     blowup_rms: Any = 8000.0
@@ -106,17 +108,18 @@ class RunFlags:
             jnp.asarray(self.alpha, dtype=float_dtype()),
             jnp.asarray(self.blowup_rms, dtype=float_dtype()),
         )
-        aux_data = (self.forcflag, self.diffflag, self.expflag, self.modalflag)
+        aux_data = (self.forcflag, self.diffflag, self.expflag, self.modalflag, self.legacy_modeuler_scaling)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        forcflag, diffflag, expflag, modalflag = aux_data
+        forcflag, diffflag, expflag, modalflag, legacy_modeuler_scaling = aux_data
         alpha, blowup_rms = children
         return cls(
             forcflag=bool(forcflag),
             diffflag=bool(diffflag),
             expflag=bool(expflag),
+            legacy_modeuler_scaling=bool(legacy_modeuler_scaling),
             modalflag=bool(modalflag),
             alpha=alpha,
             blowup_rms=blowup_rms,
@@ -561,6 +564,7 @@ def _step_once(
             static.sigmaPhi,
             test,
             t,
+            legacy_modeuler_scaling=flags.legacy_modeuler_scaling,
         )
 
         # The spectral transforms return complex physical-space fields (IFFT).
@@ -696,6 +700,7 @@ def run_model_scan(
     modalflag: bool = True,
     alpha: Any = 0.01,
     expflag: bool = False,
+    legacy_modeuler_scaling: bool = False,
     K6: Any = 1.24 * (10**33),
     K6Phi: Optional[Any] = None,
     contflag: bool = False,
@@ -744,11 +749,12 @@ def run_model_scan(
         forcflag=bool(forcflag),
         diffflag=bool(diffflag),
         expflag=bool(expflag),
+        legacy_modeuler_scaling=bool(legacy_modeuler_scaling),
         modalflag=bool(modalflag),
         alpha=alpha,
     )
 
-    _warn_option_b_once(expflag=flags.expflag)
+    _warn_option_b_once(expflag=flags.expflag, legacy_modeuler_scaling=flags.legacy_modeuler_scaling)
 
     static = build_static(
         M=int(M),
@@ -970,6 +976,7 @@ def run_model(
     verbose: bool = True,
     *,
     K6Phi: Optional[float] = None,
+    legacy_modeuler_scaling: bool = False,
     # Performance knobs
     jit_scan: bool = True,
     as_numpy: bool = True,
@@ -1000,6 +1007,7 @@ def run_model(
         modalflag=modalflag,
         alpha=alpha,
         expflag=expflag,
+        legacy_modeuler_scaling=legacy_modeuler_scaling,
         K6=K6,
         K6Phi=K6Phi,
         contflag=contflag,

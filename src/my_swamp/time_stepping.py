@@ -52,21 +52,29 @@ def tstepping(
     sigmaPhi,
     test,
     t,
+    legacy_modeuler_scaling: bool = False,
 ):
     """Top-level time stepping wrapper.
 
     Returns updated spectral coefficients and physical-space fields for eta, delta,
     Phi and winds.
 
+    Parameters
+    ----------
+    legacy_modeuler_scaling:
+        Only used when `expflag=False` (modified Euler). If True, emulate historical
+        SWAMPE's modified-Euler dt-scaling quirks (phi/delta double-halving and
+        forced-eta unscaled coefficient). If False (default), use the corrected,
+        mathematically consistent scaling in :mod:`my_swamp.modEuler_tdiff`.
+
     NOTE (2026-02-06)
     -----------------
-    JAX-compatibility: scheme selection (explicit vs modified Euler) is now done via
+    JAX-compatibility: scheme selection (explicit vs modified Euler) is done via
     `jax.lax.cond` instead of a Python `if`, so `expflag` can be a traced JAX boolean.
-    Output values for ordinary Python bool flags are unchanged.
     """
 
-    def run_scheme(tdiff):
-        newPhimn, newPhitstep = tdiff.phi_timestep(
+    def do_explicit(_: object):
+        newPhimn, newPhitstep = exp_tdiff.phi_timestep(
             etam0,
             etam1,
             deltam0,
@@ -107,7 +115,7 @@ def tstepping(
             t,
         )
 
-        newdeltamn, newdeltatstep = tdiff.delta_timestep(
+        newdeltamn, newdeltatstep = exp_tdiff.delta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -148,7 +156,7 @@ def tstepping(
             t,
         )
 
-        newetamn, newetatstep = tdiff.eta_timestep(
+        newetamn, newetatstep = exp_tdiff.eta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -193,11 +201,136 @@ def tstepping(
 
         return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
 
-    def do_explicit(_: object):
-        return run_scheme(exp_tdiff)
-
     def do_modeuler(_: object):
-        return run_scheme(mod_tdiff)
+        newPhimn, newPhitstep = mod_tdiff.phi_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+            legacy_modeuler_scaling,
+        )
+
+        newdeltamn, newdeltatstep = mod_tdiff.delta_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+            legacy_modeuler_scaling,
+        )
+
+        newetamn, newetatstep = mod_tdiff.eta_timestep(
+            etam0,
+            etam1,
+            deltam0,
+            deltam1,
+            Phim0,
+            Phim1,
+            I,
+            J,
+            M,
+            N,
+            Am,
+            Bm,
+            Cm,
+            Dm,
+            Em,
+            Fm,
+            Gm,
+            Um,
+            Vm,
+            Pmn,
+            Hmn,
+            w,
+            tstepcoeff,
+            tstepcoeff2,
+            mJarray,
+            narray,
+            PhiFm,
+            dt,
+            a,
+            Phibar,
+            taurad,
+            taudrag,
+            forcflag,
+            diffflag,
+            sigma,
+            sigmaPhi,
+            test,
+            t,
+            legacy_modeuler_scaling,
+        )
+
+        Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
+
+        return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
 
     return jax.lax.cond(jnp.asarray(expflag), do_explicit, do_modeuler, operand=None)
 

@@ -114,16 +114,26 @@ def phi_timestep(
     sigmaPhi,
     test,
     t,
+    legacy_modeuler_scaling: bool = False,
 ):
     """Modified-Euler update for geopotential Phi."""
 
     _warn_once(
-        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
+        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
     )
 
-    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step (dt).
-    tstepcoeff1 = tstepcoeff1 / 2.0
-    tstepcoeff2 = tstepcoeff2 / 2.0
+    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
+
+    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step coefficient.
+    # - corrected (legacy_pred=False): divide by 2 once (effective dt)
+    # - legacy SWAMPE (legacy_pred=True): divide by 4 (double-halving in original control flow)
+    scale = jax.lax.select(
+        legacy_pred,
+        jnp.asarray(0.25, dtype=tstepcoeff1.dtype),
+        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
+    )
+    tstepcoeff1 = tstepcoeff1 * scale
+    tstepcoeff2 = tstepcoeff2 * scale
 
     forc_pred = jnp.asarray(forcflag)
 
@@ -205,15 +215,26 @@ def delta_timestep(
     sigmaPhi,
     test,
     t,
+    legacy_modeuler_scaling: bool = False,
 ):
     """Modified-Euler update for divergence delta."""
 
     _warn_once(
-        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
+        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
     )
 
-    tstepcoeff1 = tstepcoeff1 / 2.0
-    tstepcoeff2 = tstepcoeff2 / 2.0
+    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
+
+    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step coefficient.
+    # - corrected (legacy_pred=False): divide by 2 once (effective dt)
+    # - legacy SWAMPE (legacy_pred=True): divide by 4 (double-halving in original control flow)
+    scale = jax.lax.select(
+        legacy_pred,
+        jnp.asarray(0.25, dtype=tstepcoeff1.dtype),
+        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
+    )
+    tstepcoeff1 = tstepcoeff1 * scale
+    tstepcoeff2 = tstepcoeff2 * scale
 
     forc_pred = jnp.asarray(forcflag)
 
@@ -298,17 +319,28 @@ def eta_timestep(
     sigmaPhi,
     test,
     t,
+    legacy_modeuler_scaling: bool = False,
 ):
     """Modified-Euler update for absolute vorticity eta."""
 
     _warn_once(
-        "SWAMPE-JAX OPTION B (corrected physics): modEuler_tdiff uses mathematically consistent dt scaling that differs from historical SWAMPE. Historically, phi/delta effectively used tstepcoeff1/4 ('double-halving' due to overwrite structure), and eta used inconsistent scaling (forced eta path used un-halved tstepcoeff1). This version uses tstepcoeff1/2 (and tstepcoeff2/2) uniformly. Expect different trajectories vs SWAMPE for expflag=False; output parity is not expected."
+        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
     )
 
-    # Consistent (2*dt -> dt) conversion regardless of forcflag.
-    tstepcoeff1 = tstepcoeff1 / 2.0
-
     forc_pred = jnp.asarray(forcflag)
+    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
+
+    # Convert the shared coefficient from leapfrog convention (2*dt) to a single-step coefficient.
+    # - corrected (legacy_pred=False): divide by 2 regardless of forcflag
+    # - legacy SWAMPE (legacy_pred=True): forced path uses unscaled tstepcoeff1; unforced uses /2
+    scale_corrected = jnp.asarray(0.5, dtype=tstepcoeff1.dtype)
+    scale_legacy = jax.lax.select(
+        forc_pred,
+        jnp.asarray(1.0, dtype=tstepcoeff1.dtype),
+        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
+    )
+    scale = jax.lax.select(legacy_pred, scale_legacy, scale_corrected)
+    tstepcoeff1 = tstepcoeff1 * scale
 
     A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
     B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
