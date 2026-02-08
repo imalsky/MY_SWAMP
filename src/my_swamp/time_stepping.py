@@ -52,25 +52,16 @@ def tstepping(
     sigmaPhi,
     test,
     t,
-    legacy_modeuler_scaling: bool = False,
 ):
     """Top-level time stepping wrapper.
 
     Returns updated spectral coefficients and physical-space fields for eta, delta,
     Phi and winds.
 
-    Parameters
-    ----------
-    legacy_modeuler_scaling:
-        Only used when `expflag=False` (modified Euler). If True, emulate historical
-        SWAMPE's modified-Euler dt-scaling quirks (phi/delta double-halving and
-        forced-eta unscaled coefficient). If False (default), use the corrected,
-        mathematically consistent scaling in :mod:`my_swamp.modEuler_tdiff`.
+    The explicit and modified-Euler implementations are written to reproduce the
+    reference NumPy SWAMPE behavior as closely as possible.
 
-    NOTE (2026-02-06)
-    -----------------
-    JAX-compatibility: scheme selection (explicit vs modified Euler) is done via
-    `jax.lax.cond` instead of a Python `if`, so `expflag` can be a traced JAX boolean.
+    Scheme selection uses `jax.lax.cond` so `expflag` can be a traced JAX boolean.
     """
 
     def do_explicit(_: object):
@@ -241,7 +232,6 @@ def tstepping(
             sigmaPhi,
             test,
             t,
-            legacy_modeuler_scaling,
         )
 
         newdeltamn, newdeltatstep = mod_tdiff.delta_timestep(
@@ -283,7 +273,6 @@ def tstepping(
             sigmaPhi,
             test,
             t,
-            legacy_modeuler_scaling,
         )
 
         newetamn, newetatstep = mod_tdiff.eta_timestep(
@@ -325,7 +314,6 @@ def tstepping(
             sigmaPhi,
             test,
             t,
-            legacy_modeuler_scaling,
         )
 
         Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
@@ -356,8 +344,9 @@ def narray(M: int, N: int) -> jnp.ndarray:
 
 def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.ndarray:
     mu = mus[:, None]
-    denom = jnp.maximum(1e-30, 1.0 - mu**2)
-    base = (2.0 * dt) / (a * denom)  # (J,1)
+    # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1), so
+    # no division-by-zero guard is applied.
+    base = (2.0 * dt) / (a * (1.0 - mu**2))  # (J,1)
     return jnp.tile(base, (1, M + 1))
 
 
@@ -372,15 +361,19 @@ def marray(M: int, N: int) -> jnp.ndarray:
 
 
 def RMS_winds(a: float, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, U: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:
-    """Compute RMS winds (legacy discretization, vectorized).
+    """Compute RMS winds.
 
-    The original implementation cancels the latitude factors analytically, yielding:
-        rms = sqrt( (a^2*dphi*dlambda/area_planet) * sum(U^2 + V^2) )
-    where dphi and dlambda are inferred from the uniform grids.
+    This matches the reference SWAMPE discretization (vectorized):
+        area_comp = a^2 * (sin(phi + pi/2))^2 * dphi * dlambda
+        integrand = (U/cos(phi))^2 + (V/cos(phi))^2
+        rms = sqrt( sum(area_comp * integrand / area_planet) )
     """
-    phis = jnp.arcsin(mus)  # (J,)
+    phis = jnp.arcsin(mus)[:, None]  # (J,1)
     deltalambda = lambdas[2] - lambdas[1]
-    deltaphi = phis[2] - phis[1]
+    deltaphi = phis[2, 0] - phis[1, 0]
     area_planet = 4.0 * jnp.pi * a**2
-    const = (a**2) * deltaphi * deltalambda / area_planet
-    return jnp.sqrt(const * jnp.sum(U**2 + V**2))
+
+    area_comp = (a**2) * (jnp.sin(phis + jnp.pi / 2.0) ** 2) * deltaphi * deltalambda  # (J,1)
+    integrand = (U / jnp.cos(phis)) ** 2 + (V / jnp.cos(phis)) ** 2  # (J,I)
+
+    return jnp.sqrt(jnp.sum(area_comp * integrand / area_planet))

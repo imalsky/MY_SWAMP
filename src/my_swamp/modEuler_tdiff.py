@@ -1,55 +1,24 @@
 # -*- coding: utf-8 -*-
 """my_swamp.modEuler_tdiff
 
-Functions associated with the modified-Euler time-stepping scheme.
+Modified-Euler time differencing following Hack and Jakob (1992).
 
-The public API (function names + signatures) is intentionally kept compatible with
-the historical SWAMPE layout because `time_stepping.tstepping(...)` calls these
-functions with many positional arguments.
+This module is written to reproduce the reference NumPy SWAMPE implementation
+as closely as possible, including historical coefficient quirks in that code.
 
-NOTE (2026-02-06)
------------------
-BUGFIX (mathematics / control flow):
-    The previous JAX port contained several copy/paste and control-flow issues:
+In the reference SWAMPE implementation:
+  * Phi and delta updates effectively use tstepcoeff/4 and tstepcoeff2/4 due to
+    a double-halving conversion from the leapfrog (2*dt) coefficient.
+  * eta uses the unscaled tstepcoeff when forcflag=True, and tstepcoeff/2 when
+    forcflag=False.
+  * delta uses (Bm+Fm) and (Am-Gm) even when forcflag=False (a historical quirk).
 
-    1) `phi_timestep` and `delta_timestep` computed a full update using
-       `tstepcoeff1/=2` and `tstepcoeff2/=2`, but then *always overwrote* the
-       result inside the `forcflag`/`else` blocks after dividing the coefficients
-       by 2 *again*. In practice, the first computation was always overwritten, so
-       the effective coefficient was consistently "double-halved" (phi/delta used
-       an effective tstepcoeff1/4).
-
-       Option B behavior: this JAX version intentionally applies the (2*dt -> dt)
-       conversion exactly once (effective tstepcoeff1/2). This is a behavior change
-       relative to historical SWAMPE trajectories.
-
-    2) `delta_timestep` used forced expressions `(Bm + Fm)` and `(Am - Gm)` even
-       in the `forcflag == False` branch.
-
-       Fix: when `forcflag` is false, use unforced `Am`/`Bm` consistently and do
-       not add the Phi forcing contribution.
-
-    3) `eta_timestep` applied the (2*dt -> dt) coefficient conversion only in the
-       `forcflag == False` path, making forced vs unforced runs use different
-       effective timesteps.
-
-       Fix: apply the conversion unconditionally so both forced/unforced modes
-       use the same scheme.
-
-JAX-compatibility (no change in values for static flags):
-    Python `if` statements on `forcflag`/`diffflag` are replaced with
-    `jax.lax.cond` / `jax.lax.select` so the functions remain traceable/jittable
-    when flags are provided as JAX booleans.
-
-USER WARNING:
-    These fixes can change model trajectories compared to previous outputs when
-    `expflag=False` (modified Euler branch).
+The JAX port below implements these behaviors directly but remains fully
+vectorized and differentiable.
 """
 
 from __future__ import annotations
 
-import logging
-import warnings
 from typing import Any, Callable
 
 import jax
@@ -58,20 +27,9 @@ import jax.numpy as jnp
 from . import filters
 from . import spectral_transform as st
 
-_LOGGER = logging.getLogger(__name__)
-_WARNED_MODEULER_FIX = False
-
-
-def _warn_once(msg: str) -> None:
-    global _WARNED_MODEULER_FIX
-    if _WARNED_MODEULER_FIX:
-        return
-    _WARNED_MODEULER_FIX = True
-    _LOGGER.warning(msg)
-    warnings.warn(msg, UserWarning, stacklevel=2)
-
 
 def _cond(pred: Any, true_fun: Callable[[Any], Any], false_fun: Callable[[Any], Any], operand: Any) -> Any:
+    """JAX-friendly conditional that also works with Python bools."""
     return jax.lax.cond(jnp.asarray(pred), true_fun, false_fun, operand)
 
 
@@ -114,43 +72,26 @@ def phi_timestep(
     sigmaPhi,
     test,
     t,
-    legacy_modeuler_scaling: bool = False,
 ):
-    """Modified-Euler update for geopotential Phi."""
+    """Modified-Euler update for geopotential Phi (reference SWAMPE parity)."""
 
-    _warn_once(
-        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
-    )
+    # Reference SWAMPE quirk: effective conversion is /4.
+    tstep1 = tstepcoeff1 / 4.0
+    tstep2 = tstepcoeff2 / 4.0
 
-    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
+    # Use forced/non-forced A,B coupling exactly as in reference.
+    B_eff = jax.lax.select(jnp.asarray(forcflag), Bm + Fm, Bm)
+    A_eff = jax.lax.select(jnp.asarray(forcflag), Am - Gm, Am)
 
-    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step coefficient.
-    # - corrected (legacy_pred=False): divide by 2 once (effective dt)
-    # - legacy SWAMPE (legacy_pred=True): divide by 4 (double-halving in original control flow)
-    scale = jax.lax.select(
-        legacy_pred,
-        jnp.asarray(0.25, dtype=tstepcoeff1.dtype),
-        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
-    )
-    tstepcoeff1 = tstepcoeff1 * scale
-    tstepcoeff2 = tstepcoeff2 * scale
-
-    forc_pred = jnp.asarray(forcflag)
-
-    # Forcing enters through the wind forcing terms (Fm, Gm) in the divergence-related pieces.
-    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
-    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
-
-    # Main Phi terms
     Phicomp1 = st.fwd_leg(Phim1, J, M, N, Pmn, w)
-    Phicomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
-    Phicomp3 = st.fwd_leg(tstepcoeff1 * Dm, J, M, N, Hmn, w)
+    Phicomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
+    Phicomp3 = st.fwd_leg(tstep1 * Dm, J, M, N, Hmn, w)
     Phicomp4 = dt * Phibar * st.fwd_leg(deltam1, J, M, N, Pmn, w)
 
-    # Divergence-related coupling pieces
-    deltacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
-    deltacomp3 = st.fwd_leg(tstepcoeff1 * A_eff, J, M, N, Hmn, w)
-    deltacomp5 = st.fwd_leg(tstepcoeff2 * Em, J, M, N, Pmn, w)
+    deltacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
+    deltacomp3 = st.fwd_leg(tstep1 * A_eff, J, M, N, Hmn, w)
+
+    deltacomp5 = st.fwd_leg(tstep2 * Em, J, M, N, Pmn, w)
     deltacomp5 = narray * deltacomp5
 
     Phimntstep = (
@@ -160,14 +101,14 @@ def phi_timestep(
         - Phicomp4
         - Phibar
         * 0.5
-        * (deltacomp2 + deltacomp3 + deltacomp5 + (1.0 / (a**2)) * jnp.multiply(narray, Phicomp1))
+        * (deltacomp2 + deltacomp3 + deltacomp5 + (1.0 / (a**2)) * (narray * Phicomp1))
     )
 
-    def add_phi_forcing(x):
+    def _add_forcing(x):
         Phiforcing = st.fwd_leg(dt * PhiFm, J, M, N, Pmn, w)
         return x + Phiforcing
 
-    Phimntstep = _cond(forc_pred, add_phi_forcing, lambda x: x, Phimntstep)
+    Phimntstep = _cond(forcflag, _add_forcing, lambda x: x, Phimntstep)
     Phimntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigmaPhi), lambda x: x, Phimntstep)
 
     newPhimtstep = st.invrs_leg(Phimntstep, I, J, M, N, Pmn)
@@ -215,45 +156,29 @@ def delta_timestep(
     sigmaPhi,
     test,
     t,
-    legacy_modeuler_scaling: bool = False,
 ):
-    """Modified-Euler update for divergence delta."""
+    """Modified-Euler update for divergence delta (reference SWAMPE parity)."""
 
-    _warn_once(
-        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
-    )
+    # Reference SWAMPE quirk: effective conversion is /4.
+    tstep1 = tstepcoeff1 / 4.0
+    tstep2 = tstepcoeff2 / 4.0
 
-    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
-
-    # Convert the shared coefficients from the leapfrog convention (2*dt) to a single-step coefficient.
-    # - corrected (legacy_pred=False): divide by 2 once (effective dt)
-    # - legacy SWAMPE (legacy_pred=True): divide by 4 (double-halving in original control flow)
-    scale = jax.lax.select(
-        legacy_pred,
-        jnp.asarray(0.25, dtype=tstepcoeff1.dtype),
-        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
-    )
-    tstepcoeff1 = tstepcoeff1 * scale
-    tstepcoeff2 = tstepcoeff2 * scale
-
-    forc_pred = jnp.asarray(forcflag)
-
-    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
-    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
+    # Reference SWAMPE quirk: uses forced A,B terms even when forcflag=False.
+    B_force = Bm + Fm
+    A_force = Am - Gm
 
     deltacomp1 = st.fwd_leg(deltam1, J, M, N, Pmn, w)
+    deltacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * B_force, J, M, N, Pmn, w)
+    deltacomp3 = st.fwd_leg(tstep1 * A_force, J, M, N, Hmn, w)
 
-    deltacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
-    deltacomp3 = st.fwd_leg(tstepcoeff1 * A_eff, J, M, N, Hmn, w)
-
-    deltacomp4 = st.fwd_leg(tstepcoeff2 * Phim1, J, M, N, Pmn, w)
+    deltacomp4 = st.fwd_leg(tstep2 * Phim1, J, M, N, Pmn, w)
     deltacomp4 = narray * deltacomp4
 
-    deltacomp5 = st.fwd_leg(tstepcoeff2 * Em, J, M, N, Pmn, w)
+    deltacomp5 = st.fwd_leg(tstep2 * Em, J, M, N, Pmn, w)
     deltacomp5 = narray * deltacomp5
 
-    Phicomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
-    Phicomp3 = st.fwd_leg(tstepcoeff1 * Dm, J, M, N, Hmn, w)
+    Phicomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
+    Phicomp3 = st.fwd_leg(tstep1 * Dm, J, M, N, Hmn, w)
 
     deltamntstep = (
         deltacomp1
@@ -261,17 +186,16 @@ def delta_timestep(
         + deltacomp3
         + deltacomp4
         + deltacomp5
-        + jnp.multiply(narray, (Phicomp2 + Phicomp3) / 2.0) / (a**2)
-        - Phibar * jnp.multiply(narray, deltacomp1) / (a**2)
+        + (narray * (Phicomp2 + Phicomp3)) / (2.0 * (a**2))
+        - Phibar * (narray * deltacomp1) / (a**2)
     )
 
-    def add_phi_forcing(x):
-        # Retain the historical dt/2 factor here: this term represents the Phi-forcing contribution
-        # appearing through the (Phi^{n+1}+Phi^{n})/2 average used in the divergence update.
-        Phiforcing = jnp.multiply(narray, st.fwd_leg((dt / 2.0) * PhiFm, J, M, N, Pmn, w)) / (a**2)
+    def _add_forcing(x):
+        # Reference SWAMPE includes dt/2 here.
+        Phiforcing = (narray * st.fwd_leg((dt / 2.0) * PhiFm, J, M, N, Pmn, w)) / (a**2)
         return x + Phiforcing
 
-    deltamntstep = _cond(forc_pred, add_phi_forcing, lambda x: x, deltamntstep)
+    deltamntstep = _cond(forcflag, _add_forcing, lambda x: x, deltamntstep)
     deltamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, deltamntstep)
 
     newdeltamtstep = st.invrs_leg(deltamntstep, I, J, M, N, Pmn)
@@ -319,38 +243,20 @@ def eta_timestep(
     sigmaPhi,
     test,
     t,
-    legacy_modeuler_scaling: bool = False,
 ):
-    """Modified-Euler update for absolute vorticity eta."""
-
-    _warn_once(
-        "SWAMPE-JAX modEuler_tdiff: dt scaling can emulate historical SWAMPE or use corrected scaling. Pass legacy_modeuler_scaling=True to reproduce SWAMPE's historical modified-Euler coefficient quirks (phi/delta effectively used tstepcoeff1/4 and tstepcoeff2/4 due to double-halving; eta used unscaled tstepcoeff1 when forcflag=True). With legacy_modeuler_scaling=False (default), this JAX code uses a mathematically consistent single conversion (phi/delta/eta use tstepcoeff1/2 and tstepcoeff2/2 where applicable)."
-    )
+    """Modified-Euler update for absolute vorticity eta (reference SWAMPE parity)."""
 
     forc_pred = jnp.asarray(forcflag)
-    legacy_pred = jnp.asarray(legacy_modeuler_scaling)
-
-    # Convert the shared coefficient from leapfrog convention (2*dt) to a single-step coefficient.
-    # - corrected (legacy_pred=False): divide by 2 regardless of forcflag
-    # - legacy SWAMPE (legacy_pred=True): forced path uses unscaled tstepcoeff1; unforced uses /2
-    scale_corrected = jnp.asarray(0.5, dtype=tstepcoeff1.dtype)
-    scale_legacy = jax.lax.select(
-        forc_pred,
-        jnp.asarray(1.0, dtype=tstepcoeff1.dtype),
-        jnp.asarray(0.5, dtype=tstepcoeff1.dtype),
-    )
-    scale = jax.lax.select(legacy_pred, scale_legacy, scale_corrected)
-    tstepcoeff1 = tstepcoeff1 * scale
-
+    # Reference SWAMPE quirk: forced branch uses unscaled tstepcoeff1; unforced uses /2.
+    tstep1 = jax.lax.select(forc_pred, tstepcoeff1, tstepcoeff1 / 2.0)
     A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
     B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
 
     etacomp1 = st.fwd_leg(etam1, J, M, N, Pmn, w)
-    etacomp2 = st.fwd_leg(tstepcoeff1 * (1j) * mJarray * A_eff, J, M, N, Pmn, w)
-    etacomp3 = st.fwd_leg(tstepcoeff1 * B_eff, J, M, N, Hmn, w)
+    etacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * A_eff, J, M, N, Pmn, w)
+    etacomp3 = st.fwd_leg(tstep1 * B_eff, J, M, N, Hmn, w)
 
     etamntstep = etacomp1 - etacomp2 + etacomp3
-
     etamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, etamntstep)
 
     newetamtstep = st.invrs_leg(etamntstep, I, J, M, N, Pmn)

@@ -83,7 +83,8 @@ def state_var_init(
 
     mu = jnp.asarray(mus, dtype=float_dtype())[:, None]          # (J,1)
     lam = jnp.asarray(lambdas, dtype=float_dtype())[None, :]     # (1,I)
-    sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
+    # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1).
+    sqrt_1m = jnp.sqrt(1.0 - mu**2)
 
     etaamp = jnp.asarray(etaamp, dtype=float_dtype())
 
@@ -111,7 +112,6 @@ def state_var_init(
 
         # With mucenter=0, the expression simplifies but we keep the original form.
         dist_arg = mucenter * mu + jnp.cos(jnp.arcsin(mucenter)) * jnp.cos(jnp.arcsin(mu)) * jnp.cos(lam - lambdacenter)
-        dist_arg = jnp.clip(dist_arg, -1.0, 1.0)
         dist = a * jnp.arccos(dist_arg)
 
         bump = (Phibar / 2.0) * (1.0 + jnp.cos(jnp.pi * dist / bumpr))
@@ -153,7 +153,8 @@ def velocity_init(
 
     mu = jnp.asarray(mus, dtype=float_dtype())[:, None]
     lam = jnp.asarray(lambdas, dtype=float_dtype())[None, :]
-    sqrt_1m = jnp.sqrt(jnp.maximum(0.0, 1.0 - mu**2))
+    # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1).
+    sqrt_1m = jnp.sqrt(1.0 - mu**2)
 
     SU0 = jnp.asarray(SU0, dtype=float_dtype())
     cosa = jnp.asarray(cosa, dtype=float_dtype())

@@ -25,8 +25,7 @@ def Phieqfun(
     # Initialize to flat nightside geopotential
     PhieqMat = jnp.full((J, I), Phibar)
     
-    # Only force the dayside: -pi/2 < lambda < pi/2
-    # CORRECTED: Original uses strict inequality
+    # Only force the dayside: -pi/2 < lambda < pi/2 (strict inequality, matching SWAMPE)
     dayside = (lambdas > -jnp.pi / 2) & (lambdas < jnp.pi / 2)  # (I,)
     daymask = dayside[None, :]  # (1, I)
     
@@ -51,28 +50,6 @@ def Qfun(
     return Q
 
 
-def Qfun_with_rampup(
-    Phieq: jnp.ndarray,
-    Phi: jnp.ndarray,
-    Phibar: float,
-    taurad: float,
-    t: int,
-    dt: float
-) -> jnp.ndarray:
-    """
-    Evaluates the radiative forcing on the geopotential, but slowly ramps up 
-    the forcing to improve stability for short radiative timescales.
-    """
-    # slowly ramp up over 15 hours
-    time_elapsed = t * dt
-    ramp_time = 15 * 3600  # 15 hours in seconds
-    
-    factor = jnp.where(time_elapsed < ramp_time, time_elapsed / ramp_time, 1.0)
-    
-    Q = factor * (1 / taurad) * (Phieq - (Phi + Phibar))
-    return Q
-
-
 def Rfun(
     U: jnp.ndarray,
     V: jnp.ndarray,
@@ -91,11 +68,8 @@ def Rfun(
     
     # Compute Ru, Rv
     phi_total = Phi + Phibar
-    # Avoid division by zero
-    denom = jnp.where(phi_total == 0.0, 1e-30, phi_total)
-    
-    Ru = -U * Qclone / denom
-    Rv = -V * Qclone / denom
+    Ru = -U * Qclone / phi_total
+    Rv = -V * Qclone / phi_total
     
     # Reset to 0 if losing mass (Q < 0)
     Ru = jnp.where(Q < 0, 0.0, Ru)
@@ -114,41 +88,3 @@ def Rfun(
 
     return F, G
 
-
-def Rfun_jax(
-    U: jnp.ndarray,
-    V: jnp.ndarray,
-    Q: jnp.ndarray,
-    Phi: jnp.ndarray,
-    Phibar: float,
-    taudrag: float,
-    no_drag: bool = False
-):
-    """
-    JAX-compatible version of Rfun that handles taudrag condition with explicit flag.
-    
-    Use no_drag=True to emulate taudrag==-1 behavior.
-    """
-    # Clone Q and zero out negative values
-    Qclone = jnp.where(Q < 0, 0.0, Q)
-    
-    # Compute Ru, Rv
-    phi_total = Phi + Phibar
-    denom = jnp.where(phi_total == 0.0, 1e-30, phi_total)
-    
-    Ru = -U * Qclone / denom
-    Rv = -V * Qclone / denom
-    
-    # Reset to 0 if losing mass
-    Ru = jnp.where(Q < 0, 0.0, Ru)
-    Rv = jnp.where(Q < 0, 0.0, Rv)
-    
-    # Apply drag if not disabled
-    if no_drag:
-        F = Ru
-        G = Rv
-    else:
-        F = Ru - (U / taudrag)
-        G = Rv - (V / taudrag)
-    
-    return F, G

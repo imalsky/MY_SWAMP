@@ -59,7 +59,6 @@ def main(
     *,
     # JAX-only extensions (kept keyword-only to avoid disturbing legacy call sites)
     K6Phi: Optional[float] = None,
-    use_scipy_basis: bool = True,
 ):
     """Run SWAMPE-JAX with the legacy numpy `main_function.main(...)` signature.
 
