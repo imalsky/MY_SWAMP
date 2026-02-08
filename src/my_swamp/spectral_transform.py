@@ -35,13 +35,29 @@ except Exception as exc:  # pragma: no cover
     _SCIPY_IMPORT_ERROR = exc
 
 
-def build_lambdas(I: int) -> jnp.ndarray:
-    """Return uniformly spaced longitudes in [-pi, pi)."""
+def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
+    """Return uniformly spaced longitudes in [-pi, pi).
+
+    Parameters
+    ----------
+    I : int
+        Number of longitude points.
+    dtype : optional
+        Floating dtype for the returned array. If omitted, uses
+        :func:`my_swamp.dtypes.float_dtype`.
+
+    Notes
+    -----
+    The reference SWAMPE code constructs longitudes as a uniform grid in
+    ``[-pi, pi)`` with ``endpoint=False``. We keep the same convention here.
+    """
     I = int(I)
-    return jnp.linspace(-jnp.pi, jnp.pi, num=I, endpoint=False, dtype=float_dtype())
+    if dtype is None:
+        dtype = float_dtype()
+    return jnp.linspace(-jnp.pi, jnp.pi, num=I, endpoint=False, dtype=dtype)
 
 
-def gauss_legendre(J: int) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def gauss_legendre(J: int, dtype=None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Gaussian quadrature nodes/weights (mus, w) for order J.
 
     The reference SWAMPE uses `scipy.special.roots_legendre(J)`.
@@ -51,8 +67,11 @@ def gauss_legendre(J: int) -> Tuple[jnp.ndarray, jnp.ndarray]:
             "SciPy is required for gauss_legendre (roots_legendre) to match SWAMPE."  # noqa: E501
         ) from _SCIPY_IMPORT_ERROR
 
+    if dtype is None:
+        dtype = float_dtype()
+
     mus_np, w_np = sp.roots_legendre(int(J))
-    return jnp.asarray(mus_np, dtype=float_dtype()), jnp.asarray(w_np, dtype=float_dtype())
+    return jnp.asarray(mus_np, dtype=dtype), jnp.asarray(w_np, dtype=dtype)
 
 
 def _scaling_table(M: int, N: int) -> np.ndarray:

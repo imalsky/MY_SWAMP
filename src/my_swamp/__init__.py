@@ -20,6 +20,7 @@ You can override this behavior by setting the environment variable
 from __future__ import annotations
 
 import os as _os
+import importlib as _importlib
 
 from ._version import __version__
 
@@ -81,11 +82,16 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Lazy import for heavy optional plotting dependencies."""
+    """Lazy import for heavy optional plotting dependencies.
+
+    Notes
+    -----
+    Using ``importlib.import_module`` avoids recursion when users do
+    ``from my_swamp import plotting``.
+    """
 
     if name == "plotting":
-        from . import plotting as _plotting
-
+        _plotting = _importlib.import_module(f"{__name__}.plotting")
         globals()["plotting"] = _plotting
         return _plotting
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
