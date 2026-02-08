@@ -58,7 +58,7 @@ def spectral_params(M: int):
     else:
         raise ValueError(f"Unsupported value of M={M}. Only 42, 63, and 106 are supported.")
 
-    lambdas = st.build_lambdas(I, dtype=float_dtype())
+    lambdas = jnp.asarray(st.build_lambdas(I), dtype=float_dtype())
     mus, w = st.gauss_legendre(J, dtype=float_dtype())
     return N, I, J, dt, lambdas, mus, w
 
