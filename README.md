@@ -1,6 +1,6 @@
 # SWAMPE-JAX (`my_swamp`)
 
-A JAX rewrite of the SWAMPE spectral shallow-water model on the sphere. The numerical core runs inside `jax.lax.scan`, making the forward simulation end-to-end differentiable with respect to physical parameters and initial conditions.
+A JAX rewrite of the SWAMPE spectral shallow‑water model on the sphere. The numerical core runs inside `jax.lax.scan`, so the forward simulation is end‑to‑end differentiable with respect to continuous physical parameters and explicit initial conditions.
 
 Document version: 2026-02-08
 
@@ -8,84 +8,111 @@ Document version: 2026-02-08
 
 ## Table of Contents
 
-1. [What This Code Does](#1-what-this-code-does)
-2. [Package Layout](#2-package-layout)
-3. [Requirements and Installation](#3-requirements-and-installation)
-4. [Running the Model](#4-running-the-model)
-5. [Using the Differentiable Path](#5-using-the-differentiable-path)
-6. [Plotting and Visualization](#6-plotting-and-visualization)
-7. [What Changed vs. NumPy SWAMPE (and What Didn't)](#7-what-changed-vs-numpy-swampe-and-what-didnt)
-8. [Known Physics Quirks Preserved for Parity](#8-known-physics-quirks-preserved-for-parity)
-9. [Candidate Corrected-Physics Changes](#9-candidate-corrected-physics-changes)
-10. [Differentiability: What Works, What Breaks, and Why](#10-differentiability-what-works-what-breaks-and-why)
-11. [GPU, Precision, and Performance Notes](#11-gpu-precision-and-performance-notes)
-12. [Running the Unit Tests](#12-running-the-unit-tests)
-13. [Known Limitations](#13-known-limitations)
-14. [Code Navigation Guide](#14-code-navigation-guide)
+1. [What This Code Does](#1-what-this-code-does)  
+2. [Package Layout](#2-package-layout)  
+3. [Requirements and Installation](#3-requirements-and-installation)  
+4. [Running the Model](#4-running-the-model)  
+5. [Differentiable Simulation API](#5-differentiable-simulation-api)  
+6. [Plotting and Visualization](#6-plotting-and-visualization)  
+7. [Behavior Relative to NumPy SWAMPE](#7-behavior-relative-to-numpy-swampe)  
+8. [Legacy Physics and Numerics Preserved for Parity](#8-legacy-physics-and-numerics-preserved-for-parity)  
+9. [Physics and Numerics Changes Not Implemented Here](#9-physics-and-numerics-changes-not-implemented-here)  
+10. [Differentiability Scope and Caveats](#10-differentiability-scope-and-caveats)  
+11. [GPU, Precision, and Performance Notes](#11-gpu-precision-and-performance-notes)  
+12. [Running the Unit Tests](#12-running-the-unit-tests)  
+13. [Known Limitations](#13-known-limitations)  
+14. [Code Navigation Guide](#14-code-navigation-guide)  
 
 ---
 
 ## 1. What This Code Does
 
-SWAMPE-JAX implements a barotropic (shallow-water) global spectral model on the sphere using triangular truncation (M = N) with Gaussian quadrature in latitude and FFT in longitude. The model solves the shallow-water equations for absolute vorticity (eta), divergence (delta), and geopotential (Phi) on a rotating sphere, with optional Newtonian relaxation forcing and Rayleigh drag.
+SWAMPE-JAX implements a single‑layer (barotropic) global spectral shallow‑water model on the sphere using triangular truncation (M = N), Gaussian quadrature in latitude, and FFT in longitude. The model advances:
 
-Typical use cases:
+- `eta`: absolute vorticity (relative vorticity plus Coriolis)
+- `delta`: divergence
+- `Phi`: geopotential-like perturbation field (often interpreted as a `gH`-like quantity in shallow-water formulations)
 
-- **Forward simulation** (SWAMPE-compatible): run for `tmax` time steps and inspect final fields (U, V, Phi, eta, delta), with optional plotting and saving.
-- **Differentiable simulation**: compute gradients of a scalar loss (defined on the final state) with respect to physical parameters (`DPhieq`, `taurad`, `taudrag`, `K6`, `Phibar`, etc.) or initial conditions (`eta0`, `delta0`, `Phi0`). Useful for parameter estimation, sensitivity analysis, adjoint-based optimal control, and surrogate training.
-- **JIT-accelerated repeated runs**: compile the scan-based simulation once with `jax.jit` for fast repeated evaluation on CPU, GPU, or TPU.
+Winds (`U`, `V`) are diagnosed from (`eta`, `delta`) via spectral inversion.
+
+Two time-stepping schemes are available (selected by `expflag`):
+
+- `expflag=False`: modified‑Euler scheme (`my_swamp/modEuler_tdiff.py`)
+- `expflag=True`: explicit scheme (`my_swamp/explicit_tdiff.py`)
+
+Optional physical/numerical terms:
+
+- Newtonian relaxation of `Phi` toward a prescribed equilibrium `Phieq` (forced mode only, `test=None`)
+- Rayleigh drag on winds (disabled when `taudrag == -1`)
+- Implicit spectral hyperdiffusion filters (`sigma6`, `sigma6Phi`)
+- Robert–Asselin / “modal splitting” filter (`modalflag`, `alpha`) applied in the driver as in SWAMPE
+
+The time loop is implemented using `jax.lax.scan` in `my_swamp/model.py`, which is the basis for differentiability and JIT acceleration.
 
 ---
 
 ## 2. Package Layout
 
+Reference implementation:
+
+- `SWAMPE copy/`  
+  Original NumPy/SciPy SWAMPE code (used as the parity baseline).
+
+JAX implementation:
+
 ```
 my_swamp/
-├── __init__.py              # Package entry; enables float64 by default
+├── __init__.py              # Package entry; enables float64 by default (configurable)
 ├── _version.py              # Version string
 ├── dtypes.py                # Centralized dtype selection (float32/64)
 ├── model.py                 # Core driver: run_model_scan (differentiable),
-│                            #   run_model (legacy wrapper), run_model_gpu
+│                            #   run_model (wrapper), run_model_gpu
 ├── main_function.py         # CLI + legacy main() signature
-├── spectral_transform.py    # Gauss–Legendre quadrature, Pmn/Hmn basis,
-│                            #   FFT truncation, forward/inverse Legendre,
+├── spectral_transform.py    # Gauss–Legendre quadrature, Pmn/Hmn basis construction,
+│                            #   FFT truncation, forward/inverse Legendre transforms,
 │                            #   wind inversion (invrsUV)
 ├── time_stepping.py         # Scheme dispatch (explicit vs modEuler),
 │                            #   coefficient arrays, RMS wind diagnostic
-├── modEuler_tdiff.py        # Modified-Euler time differencing
-├── explicit_tdiff.py        # Explicit (leapfrog-style) time differencing
-├── forcing.py               # Equilibrium geopotential, radiative forcing (Q),
-│                            #   velocity forcing with Rayleigh drag (F, G)
-├── filters.py               # Diffusion filters (sigma4, sigma6, modal splitting)
-├── initial_conditions.py    # Analytic ICs, spectral params, ABCDE nonlinear terms
+├── modEuler_tdiff.py        # Modified‑Euler time differencing (parity behavior)
+├── explicit_tdiff.py        # Explicit time differencing (parity behavior)
+├── forcing.py               # Phieq, radiative forcing Q, velocity forcing R (incl. drag + clamp)
+├── filters.py               # Diffusion filters + diffusion operator
+├── initial_conditions.py    # Supported resolutions, analytic ICs, nonlinear term construction
 ├── continuation.py          # Pickle I/O for save/load/continuation
-├── plotting.py              # Matplotlib plotting + GIF generation
-└── test_unit.py             # Spectral transform unit tests (pytest-friendly)
+├── plotting.py              # Matplotlib plotting helpers + GIF generation
+└── test_unit.py             # Unit tests for transforms and wind inversion (pytest-friendly)
 ```
 
 ---
 
 ## 3. Requirements and Installation
 
-**Minimum requirements:**
+Minimum requirements:
 
 - Python 3.9+
-- `jax` and `jaxlib` (CPU or GPU build)
+- `jax`, `jaxlib`
 - `numpy`
 
-**Optional:**
+Optional dependencies:
 
-- `scipy` — used for Gauss–Legendre quadrature and `lpmn` if available; the code falls back to pure NumPy/custom recurrence implementations when SciPy is absent.
-- `matplotlib` — only needed for plotting paths.
-- `imageio` — only needed for GIF generation.
+- `scipy`  
+  Used when available for Gauss–Legendre nodes/weights and associated Legendre polynomials. The code falls back to NumPy + recurrence implementations when SciPy is unavailable.
+- `matplotlib` and `imageio`  
+  Required only for plotting/GIF utilities.
 
-**Precision:** By default, the package enables JAX 64-bit mode at import time (in `__init__.py`) for closest parity with NumPy SWAMPE. To disable this (for faster GPU throughput at the cost of numerical differences), set the environment variable before importing:
+Precision configuration:
+
+- By default, this package enables JAX 64‑bit mode at import time for closer parity with NumPy SWAMPE.
+- The environment variable `SWAMPE_JAX_ENABLE_X64` controls this behavior (read during import of `my_swamp`):
 
 ```bash
-export SWAMPE_JAX_ENABLE_X64=0
+export SWAMPE_JAX_ENABLE_X64=1   # enable float64/complex128 (default behavior)
+export SWAMPE_JAX_ENABLE_X64=0   # disable and use float32/complex64
 ```
 
-**No installation step is required.** Just place the `my_swamp/` directory on your Python path (or run from its parent directory).
+Installation:
+
+- No packaging/installation step is required. Running from a checkout/unzip with the `my_swamp/` directory on `PYTHONPATH` is sufficient.
 
 ---
 
@@ -93,22 +120,28 @@ export SWAMPE_JAX_ENABLE_X64=0
 
 ### 4a. Command line
 
-From the directory containing the `my_swamp/` folder:
+From the directory that contains the `my_swamp/` package folder:
 
 ```bash
-# Forced mode (test=0 maps to test=None internally)
+# Forced mode (test=0 maps internally to test=None)
 python -m my_swamp.main_function --M 42 --dt 600 --tmax 200 --test 0 --no-plot
 
-# Idealized test case 1 (cosine bell advection)
+# Idealized test case 1
 python -m my_swamp.main_function --M 42 --dt 600 --tmax 200 --test 1 --no-plot
 
-# Idealized test case 2 (balanced zonal flow)
+# Idealized test case 2
 python -m my_swamp.main_function --M 42 --dt 600 --tmax 200 --test 2 --no-plot
 ```
 
-### 4b. From Python (SWAMPE-compatible wrapper)
+CLI defaults (from `my_swamp/main_function.py`):
 
-`run_model(...)` preserves the legacy SWAMPE interface. It runs the differentiable scan internally, then optionally plots and saves results. Returns NumPy arrays by default.
+- Saving is enabled by default (writes pickles under `data/`). Use `--no-save` to disable.
+- Plotting is disabled by default. Use `--plot` to enable.
+- `--plotfreq` controls plotting cadence.
+
+### 4b. Python wrapper (SWAMPE-compatible)
+
+Use `run_model(...)` for a SWAMPE-style workflow, including optional plotting/saving.
 
 ```python
 from my_swamp.model import run_model
@@ -130,29 +163,30 @@ out = run_model(
     verbose=True,
 )
 
-# Final-step fields (NumPy arrays, shape (J, I))
 U_final = out["U"]
 V_final = out["V"]
 Phi_final = out["Phi"]
 eta_final = out["eta"]
 delta_final = out["delta"]
 
-# Diagnostic time series (shape (tmax, 2))
-spinup = out["spinup"]    # [:,0] = min winds, [:,1] = RMS winds
-geopot = out["geopot"]    # [:,0] = min Phi, [:,1] = max Phi
-
-# Grid arrays
-lambdas = out["lambdas"]  # longitudes in radians
-mus = out["mus"]           # Gaussian latitudes (sin(phi))
+spinup = out["spinup"]    # (tmax, 2)
+geopot = out["geopot"]    # (tmax, 2)
+lambdas = out["lambdas"]  # (I,) longitudes [rad]
+mus = out["mus"]          # (J,) sin(latitude)
 ```
 
-### 4c. From Python (differentiable core)
+### 4c. Differentiable driver (scan core)
 
-`run_model_scan(...)` is the preferred entry point for autodiff. It returns JAX arrays and the full time history from `lax.scan`. See Section 5 for details.
+Use `run_model_scan(...)` for differentiable/JIT-friendly execution. See Section 5.
 
-### 4d. GPU-friendly wrapper
+### 4d. GPU/AD-friendly wrapper
 
-`run_model_gpu(...)` is a convenience wrapper around `run_model(...)` that defaults to `plotflag=False`, `saveflag=False`, `as_numpy=False`, `jit_scan=True`:
+`run_model_gpu(...)` is a convenience wrapper around `run_model(...)` that defaults to:
+
+- `plotflag=False`
+- `saveflag=False`
+- `as_numpy=False`
+- `jit_scan=True`
 
 ```python
 from my_swamp.model import run_model_gpu
@@ -166,9 +200,11 @@ out = run_model_gpu(
 
 ---
 
-## 5. Using the Differentiable Path
+## 5. Differentiable Simulation API
 
 ### 5a. Basic gradient computation
+
+`run_model_scan(...)` returns JAX arrays and does not perform side effects inside the time loop. A scalar objective can be differentiated with `jax.grad`.
 
 ```python
 import jax
@@ -190,17 +226,17 @@ def loss_fn(DPhieq: float) -> jnp.ndarray:
         expflag=False,
         DPhieq=DPhieq,
         contflag=False,
+        jit_scan=True,
     )
-    # scalar objective: mean Phi at the last step
     Phi_last = sim["outs"]["Phi"][-1]   # (J, I)
-    return jnp.mean(Phi_last)
+    return jnp.mean(Phi_last)           # real scalar objective
 
-# Compute gradient of the loss w.r.t. DPhieq
-dloss = jax.grad(loss_fn)(4.0e6)
-print("d(loss)/d(DPhieq) =", dloss)
+dL_dDPhieq = jax.grad(loss_fn)(4.0e6)
 ```
 
 ### 5b. Differentiating with respect to initial conditions
+
+Explicit initial fields override analytic initialization and continuation loading.
 
 ```python
 import jax
@@ -208,25 +244,22 @@ import jax.numpy as jnp
 from my_swamp.model import run_model_scan
 from my_swamp.initial_conditions import spectral_params
 
-# Get grid dimensions for M=42
-N, I, J, dt_default, lambdas, mus, w = spectral_params(42)
+N, I, J, _, lambdas, mus, w = spectral_params(42)
 
 def loss_from_ic(Phi0: jnp.ndarray) -> jnp.ndarray:
     sim = run_model_scan(
         M=42, dt=600.0, tmax=50,
         Phibar=3.0e5, omega=7.292e-5, a=6.37122e6,
-        test=None, forcflag=True, diffflag=True,
-        modalflag=True, expflag=False,
-        # Explicit initial conditions
+        test=None,
+        Phi0_init=Phi0,
         eta0_init=jnp.zeros((J, I)),
         delta0_init=jnp.zeros((J, I)),
-        Phi0_init=Phi0,
+        contflag=False,
     )
     return jnp.mean(sim["outs"]["Phi"][-1])
 
 Phi0 = jnp.zeros((J, I))
-grad_Phi0 = jax.grad(loss_from_ic)(Phi0)
-print("Gradient shape:", grad_Phi0.shape)  # (64, 128)
+dL_dPhi0 = jax.grad(loss_from_ic)(Phi0)
 ```
 
 ### 5c. Differentiating with respect to multiple parameters
@@ -236,7 +269,7 @@ import jax
 import jax.numpy as jnp
 from my_swamp.model import run_model_scan
 
-def multi_param_loss(params):
+def multi_param_loss(params: jnp.ndarray) -> jnp.ndarray:
     DPhieq, taurad, taudrag = params
     sim = run_model_scan(
         M=42, dt=600.0, tmax=100,
@@ -244,56 +277,51 @@ def multi_param_loss(params):
         test=None, forcflag=True, diffflag=True,
         modalflag=True, expflag=False,
         DPhieq=DPhieq, taurad=taurad, taudrag=taudrag,
+        contflag=False,
     )
     return jnp.mean(sim["outs"]["Phi"][-1] ** 2)
 
 params = jnp.array([4.0e6, 86400.0, 86400.0])
 grads = jax.grad(multi_param_loss)(params)
-print("Gradients:", grads)
 ```
 
-### 5d. What `run_model_scan` returns
+### 5d. Return structure and time indexing
 
-```python
-result = run_model_scan(...)
+`run_model_scan(...)` returns a dictionary:
 
-result["static"]      # Static object (grid, basis, coefficients)
-result["t_seq"]       # JAX array of time step indices
-result["last_state"]  # State namedtuple at the final time step
-result["starttime"]   # Integer start time
+- `static`: basis, grid, coefficients, filters (treated as constants by the scan)
+- `t_seq`: time indices advanced by the scan (default `arange(2, tmax)`)
+- `outs`: time history dictionary (leading axis = time)
+- `last_state`: scan carry at the final step
+- `starttime`: integer start time index (default `2`)
 
-# Time histories (JAX arrays, leading axis = time):
-outs = result["outs"]
-outs["eta"]           # (T, J, I)  absolute vorticity
-outs["delta"]         # (T, J, I)  divergence
-outs["Phi"]           # (T, J, I)  geopotential perturbation
-outs["U"]             # (T, J, I)  zonal wind
-outs["V"]             # (T, J, I)  meridional wind
-outs["rms"]           # (T,)       RMS winds
-outs["spin_min"]      # (T,)       min wind speed
-outs["phi_min"]       # (T,)       min geopotential
-outs["phi_max"]       # (T,)       max geopotential
-outs["dead"]          # (T,)       blowup detection flag
-```
+`outs` contains:
 
-### 5e. Rules for keeping the simulation differentiable
+- `outs["eta"], outs["delta"], outs["Phi"], outs["U"], outs["V"]`: fields produced by each time step
+- `outs["rms"], outs["spin_min"], outs["phi_min"], outs["phi_max"]`: diagnostics computed from the “current/middle” physical level inside `_step_once` (including Robert–Asselin filtering when enabled)
+- `outs["dead"]`: blowup gating flag
+- `outs["t"]`: the time index associated with each output sample
 
-1. **Use `run_model_scan`**, not `run_model`.
-2. Set `contflag=False` (continuation uses Python file I/O, which breaks tracing).
-3. Do not call plotting or saving functions inside your differentiated function.
-4. Do not trigger blowup stopping (keep `blowup_rms` large or avoid divergent runs).
-5. `jax.grad` requires the loss to be a **real scalar**. Complex intermediates are fine.
-6. Do not wrap JAX tracers in `float()`, `int()`, `bool()`, or `.item()`.
+Two-level initialization:
+
+- Time levels 0 and 1 are identical (the initial conditions).
+- The default scan starts at `t=2`, matching SWAMPE’s loop structure.
+
+Legacy diagnostic arrays in `run_model(...)`:
+
+- `run_model(...)` reconstructs `spinup` and `geopot` arrays of shape `(tmax, 2)`.
+- These arrays are filled at indices `(t-1)` for scan times `t` in `t_seq`.
+- With default start time 2, index 0 remains 0.0 unless separately filled.
 
 ---
 
 ## 6. Plotting and Visualization
 
-The `my_swamp.plotting` module provides three main plot types and a GIF generator. Plotting is intentionally kept outside the differentiable core.
+Plotting utilities live in `my_swamp/plotting.py` and use matplotlib and imageio.
 
-### 6a. Built-in plotting via `run_model`
+Plotting is intentionally outside the differentiable scan body.
 
-The simplest way to plot is through the legacy wrapper:
+### 6a. Built-in plotting via `run_model(...)`
 
 ```python
 from my_swamp.model import run_model
@@ -302,21 +330,15 @@ out = run_model(
     M=42, dt=600.0, tmax=200,
     Phibar=3.0e5, omega=7.292e-5, a=6.37122e6,
     test=None, forcflag=True,
-    plotflag=True,       # enable built-in plots
-    plotfreq=10,         # plot every 10 steps
-    minlevel=2.9e5,      # colorbar min for geopotential
-    maxlevel=3.1e5,      # colorbar max for geopotential
+    plotflag=True,
+    plotfreq=10,
+    minlevel=2.9e5,
+    maxlevel=3.1e5,
+    saveflag=False,
 )
 ```
 
-This produces, at every `plotfreq` steps:
-- A **mean zonal wind** profile (U averaged over all longitudes, plotted vs. latitude)
-- A **geopotential quiver plot** (filled contour of Phi + Phibar with overlaid wind vectors)
-- A **spinup diagnostic** plot (min wind speed and RMS winds vs. time)
-
-### 6b. Manual plotting from `run_model_scan` output
-
-For more control, run differentiably and plot afterward:
+### 6b. Manual plotting from `run_model_scan(...)` output
 
 ```python
 import numpy as np
@@ -328,285 +350,244 @@ sim = run_model_scan(
     Phibar=3.0e5, omega=7.292e-5, a=6.37122e6,
     test=None, forcflag=True, diffflag=True,
     modalflag=True, expflag=False,
+    contflag=False,
 )
 
 static = sim["static"]
 outs = sim["outs"]
 
-# Convert to numpy for plotting
 lambdas = np.asarray(static.lambdas)
 mus = np.asarray(static.mus)
 U = np.asarray(outs["U"])
 V = np.asarray(outs["V"])
 Phi = np.asarray(outs["Phi"])
 
-# Plot the final timestep
-step = -1  # last step
+step = -1
 Phibar = 3.0e5
 
-plotting.mean_zonal_wind_plot(
-    U[step], mus, timestamp="final", units="steps"
-)
-
-plotting.quiver_geopot_plot(
-    U[step], V[step], Phi[step] + Phibar,
-    lambdas, mus, timestamp="final", units="steps",
-    minlevel=2.9e5, maxlevel=3.1e5,
-)
+plotting.mean_zonal_wind_plot(U[step], mus, timestamp="final", units="steps")
+plotting.quiver_geopot_plot(U[step], V[step], Phi[step] + Phibar, lambdas, mus, timestamp="final", units="steps")
 ```
 
-### 6c. Generating GIFs
+### 6c. GIF generation
 
 ```python
-import numpy as np
 from my_swamp import plotting
 
-# Assuming you have time-history arrays from run_model_scan:
 Phibar = 3.0e5
-timestamps = list(range(0, 200, 10))  # every 10 steps
 indices = list(range(0, 200, 10))
+timestamps = indices
 
 plotting.write_quiver_gif(
     lambdas, mus,
-    Phi[indices] + Phibar,          # (num_snapshots, J, I)
-    U[indices],                      # (num_snapshots, J, I)
-    V[indices],                      # (num_snapshots, J, I)
+    Phi[indices] + Phibar,
+    U[indices],
+    V[indices],
     timestamps,
     filename="simulation.gif",
-    frms=5,                          # frames per second
-    sparseness=4,                    # wind vector spacing
+    frms=5,
+    sparseness=4,
     minlevel=2.9e5,
     maxlevel=3.1e5,
     units="steps",
 )
 ```
 
-### 6d. Saving figures
+Default output directories:
 
-All plot functions accept `savemyfig=True`, `filename="name.png"`, and optionally `custompath="path/"`:
-
-```python
-plotting.quiver_geopot_plot(
-    U[step], V[step], Phi[step] + Phibar,
-    lambdas, mus, timestamp="200",
-    savemyfig=True,
-    filename="geopot_200.png",
-    custompath="my_plots/",
-)
-```
+- Plot helpers write to `plots/` by default when saving figures.
+- Continuation/save helpers write to `data/` by default.
 
 ---
 
-## 7. What Changed vs. NumPy SWAMPE (and What Didn't)
+## 7. Behavior Relative to NumPy SWAMPE
 
-### Changes that are purely JAX porting (intended, value-preserving)
+The JAX implementation preserves the reference SWAMPE stepping behavior closely, including several legacy quirks that affect trajectories (Section 8).
 
-**Driver structure:** The time loop is a `jax.lax.scan` (in `model.py`) instead of a Python `for` loop. Side effects (plotting, saving, continuation I/O) are kept outside the scan.
+Additional differences arise from the JAX driver architecture.
 
-**Spectral basis and quadrature:** SciPy-based Gauss–Legendre quadrature is replaced with a JAX-compatible implementation (Golub–Welsch eigen decomposition fallback). SciPy `lpmn` is replaced with a custom recurrence when SciPy is unavailable. Both produce results matching SciPy to floating-point roundoff.
+Driver structure:
 
-**Numerical kernels:** All core array math uses `jax.numpy`, including FFTs (`jnp.fft.fft/ifft`) and `einsum`-based Legendre transforms. Several loops were vectorized. In-place NumPy masking in `forcing.py` was replaced with `jnp.where`.
+- The time loop is implemented using `jax.lax.scan` rather than a Python `for` loop.
+- Plotting/saving/continuation I/O are performed outside the scan.
 
-**Blowup stopping:** NumPy SWAMPE uses `break` to exit the time loop when RMS winds exceed a threshold. Since `lax.scan` cannot break, the JAX version enters a "dead" (frozen) state and stops updating. Field evolution is identical up to the blowup point.
+Blowup stopping semantics:
 
-### What was NOT changed (legacy quirks preserved)
+- Reference SWAMPE exits early using `break` when RMS winds exceed a threshold.
+- `lax.scan` cannot break; the JAX version enters a “dead/frozen” state and stops updating the dynamics. Outputs remain constant for subsequent steps.
 
-**This codebase is legacy-faithful.** It reproduces the reference NumPy SWAMPE behavior, including all known numerical quirks. See Section 8 for the full list.
+Basis and portability:
 
-> **Important note on README conflicts:** Earlier draft READMEs (particularly README.md shipped alongside this code) described this distribution as "Option B (corrected physics)" with bug fixes applied. **That description does not match the shipped code.** The actual `modEuler_tdiff.py` and `explicit_tdiff.py` in this archive implement legacy-faithful behavior. Similarly, a `legacy_modeuler_scaling` toggle described in some documentation does not exist in the shipped code. This unified README supersedes all prior documentation.
+- Gaussian quadrature uses SciPy (`roots_legendre`) when available and falls back to NumPy (`leggauss`) otherwise.
+- Associated Legendre values use SciPy (`lpmn`) when available and fall back to a recurrence-based implementation otherwise.
+- Basis construction occurs during `build_static(...)` and is treated as constant data during the scan.
 
----
+Forcing computation edge case (`forcflag=False` in forced mode):
 
-## 8. Known Physics Quirks Preserved for Parity
+- In the reference driver, forcing fields may still be computed upstream in forced mode, and kernels decide whether to apply them.
+- In the JAX driver, `_forcing_phys` returns zero forcing fields when `forcflag` is disabled.
 
-These behaviors exist in the reference NumPy SWAMPE and are faithfully reproduced in this JAX port. They are "quirks" from a physics/numerics standpoint, but they are part of strict trajectory parity.
+Saved-file timestamp naming:
 
-### 8.1. Modified-Euler coefficient scaling (`expflag=False`)
-
-`time_stepping.tstepcoeff(...)` returns coefficients defined with a `2*dt` convention. The modified-Euler scheme needs coefficients at a `dt` scale, but the reference SWAMPE's conversion is inconsistent:
-
-- **phi_timestep** and **delta_timestep** effectively use `tstepcoeff1/4` and `tstepcoeff2/4` (a "double halving" due to control-flow overwrites in the original code).
-- **eta_timestep** uses the **unscaled** `tstepcoeff1` when `forcflag=True`, and `tstepcoeff1/2` when `forcflag=False`.
-
-This means different prognostic variables use different effective timestep scalings, which is inconsistent but matches the reference.
-
-### 8.2. Modified-Euler delta uses forced terms even when unforced (`expflag=False`)
-
-In `modEuler_tdiff.delta_timestep`, the code always uses `Bm + Fm` and `Am - Gm` (the forced expressions), even when `forcflag=False`. This is a copy-paste artifact from the original SWAMPE. It only affects runs with `forcflag=False`.
-
-### 8.3. Explicit divergence drops computed components (`expflag=True`)
-
-In `explicit_tdiff.delta_timestep`, the code computes `deltacomp2`, `deltacomp3`, and `deltacomp4` but then discards them, returning only `deltacomp1` (the carry-over from the previous time level). This drops key divergence tendencies.
-
-### 8.4. Explicit scheme double-counts Rayleigh drag (`expflag=True`, `forcflag=True`)
-
-`forcing.Rfun(...)` already includes Rayleigh drag in F and G: `F = Ru - U/taudrag`, `G = Rv - V/taudrag`. The explicit scheme forced branch in `explicit_tdiff.delta_timestep` and `explicit_tdiff.eta_timestep` adds additional `U/taudrag` and `V/taudrag` terms, effectively applying drag twice.
-
-### 8.5. Modal splitting does not feed back into spectral state
-
-The Robert–Asselin filter is applied to physical fields for diagnostics (phi_min/phi_max computation), but the spectral coefficients used for the next time step are not recomputed from the filtered fields. The filter is therefore largely diagnostic rather than dynamically active.
-
-### 8.6. Forcing clamp for negative Q
-
-In `forcing.Rfun`, negative `Q` values are clamped to zero (`Qclone = 0 where Q < 0`), and `Ru/Rv` are set to zero where `Q < 0`. This is non-smooth and non-physical but is part of the legacy behavior.
-
-### 8.7. Unused `g` parameter in `Phieqfun`
-
-`forcing.Phieqfun` accepts a `g` parameter that is not used in the function body. This is preserved for API compatibility.
+- The JAX wrapper uses `compute_timestamp(units, t, dt)` (matching `continuation.py`).
+- The reference SWAMPE driver calls this function with swapped `(t, dt)` arguments, producing different filenames.
 
 ---
 
-## 9. Candidate Corrected-Physics Changes
+## 8. Legacy Physics and Numerics Preserved for Parity
 
-If you want a "corrected physics" mode (at the cost of breaking trajectory parity with NumPy SWAMPE), the following changes are recommended. **None of these are applied in the shipped code.** Each should be implemented behind a clearly-named flag.
+These behaviors exist in the reference NumPy SWAMPE and are reproduced here. They are trajectory‑relevant.
 
-### 9.1. Fix explicit divergence update
+1. Modified‑Euler coefficient scaling is internally inconsistent  
+   In `modEuler_tdiff.py`:
+   - `Phi` and `delta` use an effective `/4` conversion of the `2*dt` coefficient convention.
+   - `eta` uses unscaled `tstepcoeff1` when `forcflag=True` and `/2` when `forcflag=False`.
 
-In `explicit_tdiff.delta_timestep`, replace:
-```python
-deltamntstep = deltacomp1
-```
-with the intended combination:
-```python
-deltamntstep = deltacomp1 + deltacomp2 + deltacomp3 + deltacomp4
-```
-This restores all computed divergence tendency components.
+2. Modified‑Euler divergence uses forced-form A/B terms even when unforced  
+   In `modEuler_tdiff.delta_timestep`, the A/B coupling uses `(Bm + Fm)` and `(Am - Gm)` even when `forcflag=False`.
 
-### 9.2. Remove drag double-counting in the explicit scheme
+3. Explicit divergence tendency terms are dropped  
+   In `explicit_tdiff.delta_timestep`, components 2/3/4 are computed but discarded; the update uses only the carry-over term.
 
-Remove the extra `U/taudrag` and `V/taudrag` terms from `explicit_tdiff.delta_timestep._add_forcing` and `explicit_tdiff.eta_timestep._add_forcing`, since `forcing.Rfun` already includes drag.
+4. Explicit scheme applies drag-like terms in addition to `Rfun` drag  
+   `forcing.Rfun` includes Rayleigh drag when `taudrag != -1`. The explicit scheme adds additional terms proportional to `U/taudrag` and `V/taudrag`.
 
-### 9.3. Make modified-Euler coefficient scaling consistent
+5. Modal splitting does not feed back into the spectral prognostic state  
+   Robert–Asselin filtering is applied to the physical “previous” level used for diagnostics/state bookkeeping, while the spectral coefficients advanced by the step are not recomputed from filtered physical fields.
 
-Replace the /4 and mixed scaling with a uniform /2 conversion:
-```python
-# In all three modEuler functions:
-tstep1 = tstepcoeff1 / 2.0   # instead of /4 for phi/delta
-tstep2 = tstepcoeff2 / 2.0   # instead of /4 for phi/delta
-# For eta: always /2, regardless of forcflag
-```
-This gives mathematically consistent dt-scale coefficients for all variables.
+6. Forcing clamp for negative `Q`  
+   In `forcing.Rfun`, negative `Q` is clamped to zero and momentum tendencies are zeroed where `Q < 0`.
 
-### 9.4. Fix delta_timestep forced/unforced branching
-
-In `modEuler_tdiff.delta_timestep`, use `jax.lax.select` to choose `Bm+Fm` vs `Bm` and `Am-Gm` vs `Am` based on `forcflag`, rather than always using forced terms.
-
-### 9.5. Optionally activate modal splitting
-
-Apply the Robert–Asselin filter to the prognostic spectral state (by recomputing spectral coefficients from the filtered physical fields), not just to diagnostic physical fields.
-
-### 9.6. Replace Q < 0 clamp with a smooth alternative
-
-Replace the hard `jnp.where(Q < 0, 0, ...)` clamp with a soft floor or physically motivated mass correction to avoid distorting momentum coupling and creating a non-smooth gradient landscape.
-
-### 9.7. Add a `legacy_modeuler_scaling` toggle
-
-To support both legacy-faithful and corrected modes, add a `legacy_modeuler_scaling: bool` parameter to `run_model_scan(...)` that is forwarded through `time_stepping.tstepping(...)` to the three `modEuler_tdiff` functions. When `True`, use the legacy /4 and mixed scaling; when `False`, use the consistent /2 scaling.
+7. Spectral transform conventions  
+   `Pmn/Hmn` normalization uses factorial-based scaling and includes an additional sign flip for odd `m` to match SWAMPE’s convention. `invrsUV` zeros the `n=0` modes of `eta` and `delta` prior to inversion.
 
 ---
 
-## 10. Differentiability: What Works, What Breaks, and Why
+## 9. Physics and Numerics Changes Not Implemented Here
 
-### What is differentiable
+This section describes common changes that produce a more internally consistent shallow‑water solver at the cost of breaking strict SWAMPE trajectory parity. These changes are not applied in this code snapshot.
 
-The core time integration in `model.simulate_scan()` is built around `jax.lax.scan` and uses JAX primitives throughout (`jax.numpy`, `jax.lax.cond`, `jax.lax.select`, FFTs, `einsum`). In the scan path (no plotting, no saving, no NumPy materialization), the simulation is differentiable with respect to:
+1. Explicit scheme: include the full divergence tendency  
+   Replace the explicit divergence update with the sum of all computed components.
 
-- Continuous physical parameters: `dt`, `Phibar`, `omega`, `a`, `taurad`, `taudrag`, `K6`, `DPhieq`, `alpha`, and initial conditions (`eta0_init`, `delta0_init`, `Phi0_init`).
-- Any smooth scalar objective defined on the scan outputs.
+2. Explicit scheme: remove drag double-counting  
+   Apply Rayleigh drag in exactly one location (either `forcing.Rfun` or explicit forcing expressions), not both.
 
-### What can break differentiability
+3. Modified‑Euler: make coefficient scaling consistent  
+   Replace the mixed `/4`, `/2`, and branch-dependent scalings with one documented discretization.
 
-**1. Python-side side effects.** File I/O (continuation, saving) and plotting (matplotlib) force host transfers and Python execution. These occur only in `run_model(...)`, not in the scan core. **Rule of thumb:** differentiate through `run_model_scan`, not `run_model`.
+4. Modified‑Euler: correct unforced `delta` A/B coupling  
+   Use `Bm` and `Am` when `forcflag=False`, rather than forced-form expressions.
 
-**2. Converting JAX tracers to Python scalars.** Calls like `float(x)`, `int(x)`, `bool(x)`, or `x.item()` on JAX tracers break tracing. The scan core avoids these, but user-added logic might introduce them.
+5. Modal splitting: make filtering dynamically effective  
+   Apply Robert–Asselin filtering to the prognostic state used by the next step (including spectral coefficients), not only to stored physical fields.
 
-**3. Python control flow conditioned on JAX arrays.** Writing `if some_jax_array > 0:` breaks JIT/autodiff. The codebase uses `jax.lax.cond` / `jnp.where` instead. Remaining Python branches (e.g., `if test == 1:`) are on compile-time Python constants, which is safe.
+6. Replace the hard `Q < 0` clamp with a smoother correction  
+   A smooth limiter or a physically motivated correction reduces non-smoothness and can improve gradient-based inference behavior.
 
-**4. Blowup gating (piecewise gradients).** The scan uses a `jax.lax.cond` gate: if RMS winds exceed `blowup_rms`, the state freezes. This is differentiable along the taken branch but introduces a non-smooth decision boundary. If you need stable gradients, set `blowup_rms` very large or disable the gate.
+---
 
-**5. Non-smooth diagnostics.** `jnp.min` and `jnp.max` used in diagnostics (`spin_min`, `phi_min`, `phi_max`) have undefined gradients where the argmin/argmax changes. If your loss depends on these, expect noisy gradients.
+## 10. Differentiability Scope and Caveats
 
-**6. Discrete configuration.** Spectral resolution `M` and boolean flags (`forcflag`, `diffflag`, etc.) are discrete. Gradients with respect to these are not meaningful.
+The intended differentiable execution path is:
 
-**7. Static basis construction.** `Pmn/Hmn` and Gauss–Legendre nodes/weights are built with Python-side loops and caching. These are treated as constants during the scan and are not differentiated. This is the intended design.
+- `run_model_scan(..., contflag=False, jit_scan=True)` inside a scalar loss,
+- `jax.grad(loss_fn)` or `jax.value_and_grad(loss_fn)`.
 
-### The "clean" differentiable path
+Differentiation is supported with respect to:
 
-Call `run_model_scan(...)` with `contflag=False`, no plotting/saving, and parameter values that do not trigger blowup stopping. This is the intended fully differentiable branch.
+- Continuous scalar parameters that enter the scan (e.g., `DPhieq`, `taurad`, `taudrag`, `K6`, `K6Phi`, `Phibar`, `omega`, `a`, `dt`, `alpha`).
+- Initial conditions, when passed explicitly as `eta0_init`, `delta0_init`, `Phi0_init` (and optionally `U0_init`, `V0_init`).
+
+Discrete configuration is not a meaningful differentiation target:
+
+- `M`
+- boolean flags (`forcflag`, `diffflag`, `modalflag`, `expflag`)
+- test mode selection
+
+Non-smooth or piecewise components (AD works, but gradients can be kinked/noisy):
+
+- `min/max` diagnostics (`phi_min`, `phi_max`, `spin_min`)
+- `Q < 0` clamp in `forcing.Rfun`
+- blowup gating threshold branch
+
+Side effects and host materialization:
+
+- Plotting, saving, and continuation I/O are intentionally outside the scan and should not be executed inside a differentiated function.
 
 ---
 
 ## 11. GPU, Precision, and Performance Notes
 
-### GPU execution
+GPU execution:
 
-The scan body uses JAX ops throughout and will place compute on GPU when you have GPU-enabled `jaxlib` and avoid host transfers (`as_numpy=False`, `saveflag=False`, `plotflag=False`). Use `run_model_gpu(...)` or `run_model_scan(..., jit_scan=True)`.
+- The scan body (FFTs, `einsum`, pointwise ops) runs on accelerators when GPU/TPU-enabled `jaxlib` is installed and host transfers are avoided.
+- `run_model_gpu(...)` defaults to the configuration most compatible with accelerator execution.
 
-### Precision
+Precision:
 
-The package defaults to float64 for parity with NumPy SWAMPE. On many GPUs, float64 is significantly slower. If performance matters more than exact parity, set `SWAMPE_JAX_ENABLE_X64=0` before import. Be aware that spectral models are sensitive to precision — disabling x64 will change trajectories.
+- The package defaults to float64 for closer parity with NumPy SWAMPE.
+- Float32 mode increases throughput (especially on GPUs) but changes trajectories due to spectral sensitivity to roundoff.
 
-### Batch/ensemble runs
+JIT recompilation behavior:
 
-For ensemble runs, precompute the `Static` object once via `model.build_static(...)`, build a batch of initial `State` objects (stack arrays along a leading batch axis), and `jax.vmap` a wrapper around `simulate_scan`. Adjust `in_axes` and ensure FFT/Legendre transforms operate on the correct axes.
+- JIT compilation specializes on array shapes and Python booleans. Changing `M`, `tmax`, or flags typically triggers recompilation.
 
-### JIT caching
+Ensembles and vectorization:
 
-The `run_model_scan` function caches JIT-compiled variants keyed on `test` mode and `donate_state`. Changing `M`, `tmax`, or boolean flags triggers recompilation.
+- Static basis construction occurs once in `build_static(...)`.
+- Vectorized/ensemble execution typically wraps `run_model_scan` in `jax.vmap` over batched initial conditions or parameters, with care taken to preserve array axis conventions.
 
 ---
 
 ## 12. Running the Unit Tests
 
-The unit tests validate spectral transforms and wind inversion, not end-to-end integration.
+From the repository root:
 
 ```bash
-# From the directory containing my_swamp/
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 pytest -q
-
-# Or run directly
-python -m my_swamp.test_unit
 ```
 
-Tests cover: spectral parameter initialization, `Pmn/Hmn` values at known points, forward Legendre transform of the Coriolis field, forward-then-inverse spectral round-trip, wind-to-vorticity-to-wind round-trip, and vorticity-to-wind-to-vorticity round-trip.
+Notes:
 
-**Recommended additional tests** (not yet implemented):
+- The package defaults to enabling JAX 64-bit mode for closer parity with the NumPy/SciPy SWAMPE reference.  
+  To run tests in 32-bit mode (faster, lower memory), set:
+  ```bash
+  export SWAMPE_JAX_ENABLE_X64=0
+  ```
 
-- Trajectory-level regression tests against a short reference NumPy SWAMPE run (10–50 steps).
-- Gradient checks: compare `jax.grad` output against finite differences for a small objective at low resolution.
+- You can also run the legacy spectral-transform test module directly:
+  ```bash
+  python -m my_swamp.test_unit
+  ```
 
 ---
 
 ## 13. Known Limitations
 
-- **Supported resolutions:** Only M = 42, 63, and 106 are accepted (hardcoded in `initial_conditions.spectral_params`).
-- **Test modes:** Only `test=None` (forced), `test=1`, and `test=2` are implemented. Other test codes from the original SWAMPE `main_function.py` are not supported.
-- **Unused legacy parameters:** `main_function.main(...)` accepts `k1`, `k2`, `pressure`, `R`, `Cp`, `sigmaSB` for API compatibility but ignores them.
-- **`use_scipy_basis` flag:** Accepted by the CLI but not implemented. Either implement it or remove it.
-- **`__pycache__` in archive:** The distributed zip may contain `__pycache__/*.pyc` files. These are harmless but should be excluded from releases.
-- **No `legacy_modeuler_scaling` toggle:** Despite references in some earlier documentation, this toggle does not exist in the shipped code. See Section 9.7 for how to implement it.
+- Supported resolutions are limited to `M in {42, 63, 106}` as defined in `initial_conditions.spectral_params`.
+- Supported test modes are `test=None` (forced), `test=1`, and `test=2`.
+- The CLI accepts `--use-scipy-basis`, but the current code does not wire this flag into basis construction; it is a placeholder.
+- Continuation saving defaults to `data/` (relative to the working directory) and plotting defaults to `plots/`.
 
 ---
 
 ## 14. Code Navigation Guide
 
-If you need to modify the numerical core, start here:
-
-| What you want to change | Where to look |
+| Topic | Primary locations |
 |---|---|
 | Time loop / scan body | `model.py` → `_step_once()`, `simulate_scan()` |
-| Scheme selection (explicit vs. modEuler) | `time_stepping.py` → `tstepping()` |
-| Modified-Euler update equations | `modEuler_tdiff.py` → `phi_timestep`, `delta_timestep`, `eta_timestep` |
-| Explicit update equations | `explicit_tdiff.py` → same three functions |
-| Forcing (Newtonian relaxation, drag) | `forcing.py` → `Phieqfun`, `Qfun`, `Rfun` |
+| Scheme selection | `time_stepping.py` → `tstepping()` |
+| Modified‑Euler update equations | `modEuler_tdiff.py` → `phi_timestep`, `delta_timestep`, `eta_timestep` |
+| Explicit update equations | `explicit_tdiff.py` → `phi_timestep`, `delta_timestep`, `eta_timestep` |
+| Forcing (Phieq/Q/R, clamp, drag) | `forcing.py` → `Phieqfun`, `Qfun`, `Rfun` |
 | Spectral transforms (FFT, Legendre) | `spectral_transform.py` → `fwd_fft_trunc`, `fwd_leg`, `invrs_leg`, `invrs_fft`, `invrsUV` |
-| Basis construction (Pmn, Hmn) | `spectral_transform.py` → `PmnHmn`, `_lpmn_fallback`, `_scaling_table` |
+| Basis construction (`Pmn`, `Hmn`) | `spectral_transform.py` → `PmnHmn`, `_lpmn_fallback`, `_scaling_table` |
 | Diffusion filters | `filters.py` → `sigma6`, `sigma6Phi`, `diffusion` |
-| Initial conditions | `initial_conditions.py` → `state_var_init`, `velocity_init`, `ABCDE_init` |
-| Nonlinear terms (A, B, C, D, E) | `initial_conditions.py` → `ABCDE_init` |
-| Coefficient arrays | `time_stepping.py` → `tstepcoeff`, `tstepcoeff2`, `tstepcoeffmn`, `marray`, `narray` |
-| Blowup detection | `model.py` → `_step_once()`, line `dead_next = ...` |
-| Robert–Asselin filter | `model.py` → `_step_once()`, `apply_ra` inner function |
-| Plotting | `plotting.py` → `mean_zonal_wind_plot`, `quiver_geopot_plot`, `spinup_plot`, `write_quiver_gif` |
-| Save/load/continuation | `continuation.py` |
+| Analytic initial conditions | `initial_conditions.py` → `spectral_params`, `state_var_init`, `velocity_init` |
+| Nonlinear terms (A–E) | `initial_conditions.py` → `ABCDE_init` |
+| Continuation save/load | `continuation.py` |
+| Plotting | `plotting.py` |
 | CLI entry point | `main_function.py` → `cli_main()` |

@@ -16,14 +16,14 @@ from __future__ import annotations
 import numpy as np
 import jax.numpy as jnp
 import jax
-from .dtypes import float_dtype
+from my_swamp.dtypes import float_dtype
 
 _X64 = bool(jax.config.read('jax_enable_x64'))
 _ATOL = 1e-12 if _X64 else 1e-5
 
-from . import spectral_transform as st
-from . import initial_conditions as ic
-from . import time_stepping as tstep
+from my_swamp import spectral_transform as st
+from my_swamp import initial_conditions as ic
+from my_swamp import time_stepping as tstep
 
 
 def test_init() -> None:
