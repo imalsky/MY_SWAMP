@@ -3,16 +3,31 @@
 
 Spectral transform utilities for SWAMPE.
 
-This module matches the reference NumPy/SciPy SWAMPE implementation as closely
-as possible:
+Parity intent
+-------------
+This module is written to match the reference NumPy/SciPy SWAMPE implementation
+as closely as possible, while keeping the time-critical transforms in JAX so
+they can be JIT-compiled, GPU-accelerated, and differentiated.
 
-* Gaussian quadrature nodes/weights are computed via SciPy
-  (`scipy.special.roots_legendre`).
-* Associated Legendre polynomials and their derivatives are computed via SciPy
-  (`scipy.special.lpmn`) and then scaled exactly like the reference code.
+Static precomputation
+---------------------
+The Gaussian quadrature nodes/weights and the associated Legendre basis are
+*static* with respect to the time integration. They are computed once in Python
+and then stored as JAX arrays.
 
-The time-critical transforms (FFT and Legendre matrix multiplications) are
-implemented with JAX so they can run on GPU and be differentiated.
+For compatibility across SciPy versions:
+
+- Gaussian quadrature nodes/weights:
+    * Prefer ``scipy.special.roots_legendre`` when available.
+    * Fallback to ``numpy.polynomial.legendre.leggauss`` otherwise.
+
+- Associated Legendre polynomials and derivatives:
+    * Prefer ``scipy.special.lpmn`` when available.
+    * Fallback to a recurrence-based implementation that matches SciPy's
+      ``lpmn`` (including the Condon–Shortley phase) up to floating round-off.
+
+The runtime transforms (FFT and Legendre matrix multiplications) are implemented
+with JAX so they can run on GPU and be differentiated.
 """
 
 from __future__ import annotations
@@ -60,17 +75,23 @@ def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
 def gauss_legendre(J: int, dtype=None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Gaussian quadrature nodes/weights (mus, w) for order J.
 
-    The reference SWAMPE uses `scipy.special.roots_legendre(J)`.
+    The reference SWAMPE uses ``scipy.special.roots_legendre(J)``.
+    For portability, this implementation falls back to
+    ``numpy.polynomial.legendre.leggauss(J)`` if SciPy is unavailable.
     """
-    if sp is None:  # pragma: no cover
-        raise ImportError(
-            "SciPy is required for gauss_legendre (roots_legendre) to match SWAMPE."  # noqa: E501
-        ) from _SCIPY_IMPORT_ERROR
-
     if dtype is None:
         dtype = float_dtype()
 
-    mus_np, w_np = sp.roots_legendre(int(J))
+    J = int(J)
+
+    if sp is not None and hasattr(sp, "roots_legendre"):
+        mus_np, w_np = sp.roots_legendre(J)
+    else:
+        # NumPy fallback (no SciPy dependency)
+        from numpy.polynomial.legendre import leggauss
+
+        mus_np, w_np = leggauss(J)
+
     return jnp.asarray(mus_np, dtype=dtype), jnp.asarray(w_np, dtype=dtype)
 
 
@@ -92,19 +113,91 @@ def _scaling_table(M: int, N: int) -> np.ndarray:
     return scale
 
 
+def _lpmn_fallback(M: int, N: int, x: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Fallback for ``scipy.special.lpmn`` using a stable recurrence.
+
+    Returns
+    -------
+    P, dP : np.ndarray
+        Arrays of shape (M+1, N+1), matching SciPy's ``lpmn`` ordering:
+        first index is order m, second is degree n.
+
+    Notes
+    -----
+    - Includes the Condon–Shortley phase (``(-1)^m``), matching SciPy.
+    - The derivative is with respect to ``x`` (not latitude).
+    """
+    M = int(M)
+    N = int(N)
+
+    P = np.zeros((M + 1, N + 1), dtype=np.float64)
+    dP = np.zeros((M + 1, N + 1), dtype=np.float64)
+
+    P[0, 0] = 1.0
+
+    if M == 0 and N == 0:
+        return P, dP
+
+    # sqrt(1 - x^2) is well-defined for Gauss–Legendre nodes (|x|<1).
+    s = math.sqrt(max(0.0, 1.0 - x * x))
+
+    # Diagonal terms P_m^m via a stable recurrence:
+    # P_m^m(x) = -(2m-1) * sqrt(1-x^2) * P_{m-1}^{m-1}(x)
+    for m in range(1, M + 1):
+        if m <= N:
+            P[m, m] = -(2 * m - 1) * s * P[m - 1, m - 1]
+
+    # First off-diagonal: P_m^{m+1}(x) = (2m+1) x P_m^m(x)
+    for m in range(0, min(M, N - 1) + 1):
+        P[m, m + 1] = (2 * m + 1) * x * P[m, m]
+
+    # Upward recurrence in n (degree):
+    # P_m^n(x) = ((2n-1)x P_m^{n-1}(x) - (n+m-1) P_m^{n-2}(x)) / (n-m)
+    for m in range(0, M + 1):
+        for n in range(m + 2, N + 1):
+            P[m, n] = ((2 * n - 1) * x * P[m, n - 1] - (n + m - 1) * P[m, n - 2]) / (n - m)
+
+    # Derivatives using:
+    # d/dx P_m^n(x) = (n x P_m^n(x) - (n+m) P_m^{n-1}(x)) / (x^2 - 1)
+    denom = (x * x) - 1.0
+    if denom == 0.0:
+        denom = np.finfo(np.float64).eps
+
+    for m in range(0, M + 1):
+        if m <= N:
+            if m == 0:
+                dP[m, m] = 0.0
+            else:
+                dP[m, m] = (m * x * P[m, m]) / denom
+
+        for n in range(m + 1, N + 1):
+            dP[m, n] = (n * x * P[m, n] - (n + m) * P[m, n - 1]) / denom
+
+    return P, dP
+
+
+
+
 def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute associated Legendre polynomials and derivatives at Gaussian latitudes.
 
     Returns
     -------
     Pmn, Hmn : jnp.ndarray
-        Arrays of shape (J, M+1, N+1) matching reference SWAMPE.
-    """
-    if sp is None:  # pragma: no cover
-        raise ImportError(
-            "SciPy is required for PmnHmn (lpmn) to match SWAMPE."  # noqa: E501
-        ) from _SCIPY_IMPORT_ERROR
+        Arrays of shape ``(J, M+1, N+1)`` matching reference SWAMPE.
 
+    Implementation notes
+    --------------------
+    The reference SWAMPE uses SciPy's ``special.lpmn`` and then applies:
+
+    - a factorial-based normalization (see `_scaling_table`)
+    - a sign flip for odd m (which cancels SciPy's Condon–Shortley phase)
+
+    For portability across SciPy versions, we:
+    - use SciPy's ``lpmn`` when present
+    - otherwise fall back to `_lpmn_fallback`, which matches SciPy's output up to
+      floating round-off.
+    """
     J = int(J)
     M = int(M)
     N = int(N)
@@ -114,12 +207,19 @@ def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.n
     Pmntemp = np.zeros((J, M + 1, N + 1), dtype=np.float64)
     Hmntemp = np.zeros((J, M + 1, N + 1), dtype=np.float64)
 
+    use_scipy_lpmn = (sp is not None) and hasattr(sp, "lpmn")
+
     for j in range(J):
-        # SciPy returns (Pmn, dP/dmu) with shape (M+1, N+1)
-        P_j, dP_j = sp.lpmn(M, N, float(mus_np[j]))
+        mu = float(mus_np[j])
+        if use_scipy_lpmn:
+            # SciPy returns (Pmn, dP/dmu) with shape (M+1, N+1)
+            P_j, dP_j = sp.lpmn(M, N, mu)
+        else:
+            P_j, dP_j = _lpmn_fallback(M, N, mu)
+
         Pmntemp[j, :, :] = P_j
         # Reference SWAMPE uses (1 - mu^2) * dP/dmu
-        Hmntemp[j, :, :] = (1.0 - mus_np[j] ** 2) * dP_j
+        Hmntemp[j, :, :] = (1.0 - mu * mu) * dP_j
 
     scale = _scaling_table(M, N)  # (M+1, N+1)
     Pmn = Pmntemp * scale[None, :, :]
