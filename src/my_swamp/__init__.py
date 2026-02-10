@@ -60,7 +60,7 @@ from . import time_stepping
 from . import model
 from . import main_function
 
-from .model import run_model, run_model_gpu
+from .model import run_model, run_model_gpu, run_model_scan, run_model_scan_final
 from .main_function import main
 
 
@@ -78,6 +78,8 @@ __all__ = [
     "run_model",
     "run_model_gpu",
     "main",
+    "run_model_scan",
+    "run_model_scan_final",
 ]
 
 

@@ -112,9 +112,10 @@ def phi_timestep(
     Phimntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigmaPhi), lambda x: x, Phimntstep)
 
     newPhimtstep = st.invrs_leg(Phimntstep, I, J, M, N, Pmn)
+    newPhim_trunc = newPhimtstep[:, : (M + 1)]
     newPhitstep = st.invrs_fft(newPhimtstep, I)
 
-    return Phimntstep, newPhitstep
+    return Phimntstep, newPhitstep, newPhim_trunc
 
 
 def delta_timestep(
@@ -199,9 +200,10 @@ def delta_timestep(
     deltamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, deltamntstep)
 
     newdeltamtstep = st.invrs_leg(deltamntstep, I, J, M, N, Pmn)
+    newdeltam_trunc = newdeltamtstep[:, : (M + 1)]
     newdeltatstep = st.invrs_fft(newdeltamtstep, I)
 
-    return deltamntstep, newdeltatstep
+    return deltamntstep, newdeltatstep, newdeltam_trunc
 
 
 def eta_timestep(
@@ -260,6 +262,7 @@ def eta_timestep(
     etamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, etamntstep)
 
     newetamtstep = st.invrs_leg(etamntstep, I, J, M, N, Pmn)
+    newetam_trunc = newetamtstep[:, : (M + 1)]
     newetatstep = st.invrs_fft(newetamtstep, I)
 
-    return etamntstep, newetatstep
+    return etamntstep, newetatstep, newetam_trunc

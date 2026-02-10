@@ -56,12 +56,59 @@ def _tree_has_tracer(pytree: Any) -> bool:
     return False
 
 
+
+
+@lru_cache(maxsize=None)
+def _cached_geometry(M: int):
+    """Cache quadrature + basis arrays that depend only on spectral truncation `M`.
+
+    This avoids repeated SciPy / NumPy work inside `st.PmnHmn`, which is costly
+    in optimization loops where only a handful of scalar parameters change.
+
+    Returns
+    -------
+    (N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray)
+    """
+
+    N, I, J, _, lambdas, mus, w = initial_conditions.spectral_params(int(M))
+    Pmn, Hmn = st.PmnHmn(J, int(M), N, mus)
+    marray = time_stepping.marray(int(M), N)
+    mJarray = time_stepping.mJarray(J, int(M))
+    narray = time_stepping.narray(int(M), N)
+    return N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray
+
 @lru_cache(maxsize=None)
 def _get_simulate_scan_jit(*, test: Optional[int], donate_state: bool):
     """Get a cached jitted wrapper around `simulate_scan` for the given mode."""
 
     def _fn(state0: State, t_seq: jnp.ndarray, static: Static, flags: RunFlags, Uic: jnp.ndarray, Vic: jnp.ndarray):
         return simulate_scan(static=static, flags=flags, state0=state0, t_seq=t_seq, test=test, Uic=Uic, Vic=Vic)
+
+    return jax.jit(_fn, donate_argnums=(0,) if donate_state else ())
+
+
+@lru_cache(maxsize=None)
+def _get_simulate_scan_last_jit(*, test: Optional[int], donate_state: bool, remat_step: bool):
+    """Get a cached jitted wrapper around `simulate_scan_last` for the given mode."""
+
+    def _fn(
+        state0: State,
+        t_seq: jnp.ndarray,
+        static: Static,
+        flags: RunFlags,
+        Uic: jnp.ndarray,
+        Vic: jnp.ndarray,
+    ) -> State:
+        return simulate_scan_last(
+            static=static,
+            flags=flags,
+            state0=state0,
+            t_seq=t_seq,
+            test=test,
+            Uic=Uic,
+            Vic=Vic,
+            remat_step=remat_step,
+        )
 
     return jax.jit(_fn, donate_argnums=(0,) if donate_state else ())
 
@@ -73,6 +120,7 @@ class RunFlags:
     diffflag: bool = True
     expflag: bool = False
     modalflag: bool = True
+    diagnostics: bool = True
     alpha: Any = 0.01
     blowup_rms: Any = 8000.0
 
@@ -82,18 +130,19 @@ class RunFlags:
             jnp.asarray(self.alpha, dtype=float_dtype()),
             jnp.asarray(self.blowup_rms, dtype=float_dtype()),
         )
-        aux_data = (self.forcflag, self.diffflag, self.expflag, self.modalflag)
+        aux_data = (self.forcflag, self.diffflag, self.expflag, self.modalflag, self.diagnostics)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        forcflag, diffflag, expflag, modalflag = aux_data
+        forcflag, diffflag, expflag, modalflag, diagnostics = aux_data
         alpha, blowup_rms = children
         return cls(
             forcflag=bool(forcflag),
             diffflag=bool(diffflag),
             expflag=bool(expflag),
             modalflag=bool(modalflag),
+            diagnostics=bool(diagnostics),
             alpha=alpha,
             blowup_rms=blowup_rms,
         )
@@ -277,7 +326,7 @@ def build_static(
 ) -> Static:
     """Build time-invariant arrays (quadrature, basis, diffusion, coefficients)."""
 
-    N, I, J, _, lambdas, mus, w = initial_conditions.spectral_params(int(M))
+    N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray = _cached_geometry(int(M))
 
     # Keep scalars as JAX values to preserve differentiability.
     dt_j = jnp.asarray(dt, dtype=float_dtype())
@@ -288,17 +337,11 @@ def build_static(
     taurad_j = jnp.asarray(taurad, dtype=float_dtype())
     taudrag_j = jnp.asarray(taudrag, dtype=float_dtype())
 
-    Pmn, Hmn = st.PmnHmn(J, int(M), N, mus)
-
     fmn = initial_conditions.coriolismn(int(M), omega_j)
 
     tstepcoeffmn = time_stepping.tstepcoeffmn(int(M), N, a_j)
     tstepcoeff = time_stepping.tstepcoeff(J, int(M), dt_j, mus, a_j)
     tstepcoeff2 = time_stepping.tstepcoeff2(J, int(M), dt_j, a_j)
-    marray = time_stepping.marray(int(M), N)
-    mJarray = time_stepping.mJarray(J, int(M))
-    narray = time_stepping.narray(int(M), N)
-
     K6_j = jnp.asarray(K6, dtype=float_dtype())
     K6Phi_eff = K6_j if K6Phi is None else jnp.asarray(K6Phi, dtype=float_dtype())
 
@@ -469,10 +512,18 @@ def _step_once(
 
     I, J, M, N = static.I, static.J, static.M, static.N
 
-    # Diagnostics on the *current* state (time level 1)
-    rms = time_stepping.RMS_winds(static.a, I, J, static.lambdas, static.mus, state.U_curr, state.V_curr)
-    spin_min = jnp.min(jnp.sqrt(state.U_curr * state.U_curr + state.V_curr * state.V_curr))
-    dead_next = jnp.logical_or(state.dead, rms > jnp.asarray(flags.blowup_rms))
+    # Diagnostics on the *current* state (time level 1).
+    #
+    # For optimization / autodiff runs you often want to skip these global reductions
+    # and the blow-up gating branch. Use flags.diagnostics=False for that mode.
+    if flags.diagnostics:
+        rms = time_stepping.RMS_winds(static.a, I, J, static.lambdas, static.mus, state.U_curr, state.V_curr)
+        spin_min = jnp.min(jnp.sqrt(state.U_curr * state.U_curr + state.V_curr * state.V_curr))
+        dead_next = jnp.logical_or(state.dead, rms > jnp.asarray(flags.blowup_rms))
+    else:
+        rms = jnp.asarray(0.0, dtype=float_dtype())
+        spin_min = jnp.asarray(0.0, dtype=float_dtype())
+        dead_next = state.dead
 
     def skip_update(_: Any) -> Tuple[State, Dict[str, Any]]:
         out = dict(
@@ -494,7 +545,7 @@ def _step_once(
 
     def do_update(_: Any) -> Tuple[State, Dict[str, Any]]:
         # Core time stepping (returns physical-space fields + spectral eta/delta/Phi)
-        newetamn, neweta, newdeltamn, newdelta, newPhimn, newPhi, newU, newV = time_stepping.tstepping(
+        newetamn, neweta, newetam, newdeltamn, newdelta, newdeltam, newPhimn, newPhi, newPhim, newU, newV, newUm, newVm = time_stepping.tstepping(
             state.etam_prev,
             state.etam_curr,
             state.deltam_prev,
@@ -552,6 +603,8 @@ def _step_once(
         # Test 1: keep winds fixed to the initial field (matches numpy SWAMPE)
         if test == 1:
             newU, newV = Uic, Vic
+            # Keep spectral winds fixed too (avoid per-step FFTs).
+            newUm, newVm = state.Um_curr, state.Vm_curr
 
         # Robert–Asselin / modal splitting affects diagnostics of the *current* level.
         do_ra = jnp.logical_and(jnp.asarray(flags.modalflag), t > 2)
@@ -568,8 +621,12 @@ def _step_once(
 
         eta_mid, delta_mid, Phi_mid = jax.lax.cond(do_ra, apply_ra, no_ra, operand=None)
 
-        phi_min = jnp.min(Phi_mid)
-        phi_max = jnp.max(Phi_mid)
+        if flags.diagnostics:
+            phi_min = jnp.min(Phi_mid)
+            phi_max = jnp.max(Phi_mid)
+        else:
+            phi_min = jnp.asarray(0.0, dtype=float_dtype())
+            phi_max = jnp.asarray(0.0, dtype=float_dtype())
 
         # Build forcing and nonlinear terms for the NEXT step (based on the new state).
         PhiF2, F2, G2 = _forcing_phys(static=static, flags=flags, test=test, Phi=newPhi, U=newU, V=newV)
@@ -579,12 +636,15 @@ def _step_once(
 
         Am2, Bm2, Cm2, Dm2, Em2 = _nonlinear_spectral(static=static, eta=neweta, Phi=newPhi, U=newU, V=newV)
 
-        # Fourier of prognostic and wind fields for the NEXT step
-        etam2 = st.fwd_fft_trunc(neweta, I, M)
-        deltam2 = st.fwd_fft_trunc(newdelta, I, M)
-        Phim2 = st.fwd_fft_trunc(newPhi, I, M)
-        Um2 = st.fwd_fft_trunc(newU, I, M)
-        Vm2 = st.fwd_fft_trunc(newV, I, M)
+        # Fourier of prognostic and wind fields for the NEXT step.
+        #
+        # Avoid redundant physical→spectral FFTs by reusing the truncated Fourier
+        # coefficients already computed inside the timestepper/inversion.
+        etam2 = newetam
+        deltam2 = newdeltam
+        Phim2 = newPhim
+        Um2 = newUm
+        Vm2 = newVm
 
         new_state = State(
             etam_prev=state.etam_curr,
@@ -653,6 +713,42 @@ def simulate_scan(
     return last_state, outs
 
 
+
+def simulate_scan_last(
+    *,
+    static: Static,
+    flags: RunFlags,
+    state0: State,
+    t_seq: jnp.ndarray,
+    test: Optional[int],
+    Uic: jnp.ndarray,
+    Vic: jnp.ndarray,
+    remat_step: bool = False,
+) -> State:
+    """Advance along `t_seq` but do NOT materialize a time history.
+
+    This is the preferred core for optimization/inference where you only need the
+    final state (e.g., the terminal `Phi_curr`) and a scalar loss.
+
+    Notes
+    -----
+    - Returning an empty scan output prevents JAX from stacking ~10k copies of
+      large 2-D fields.
+    - When `remat_step=True`, the per-step computation is rematerialized
+      (checkpointed) to trade compute for memory (mostly useful for reverse-mode).
+    """
+
+    def step(carry: State, t: jnp.ndarray):
+        if remat_step:
+            new_state, _ = jax.checkpoint(_step_once)(carry, t, static, flags, test, Uic, Vic)
+        else:
+            new_state, _ = _step_once(carry, t, static, flags, test, Uic, Vic)
+        return new_state, ()
+
+    last_state, _ = jax.lax.scan(step, state0, t_seq)
+    return last_state
+
+
 def run_model_scan(
     *,
     M: int,
@@ -686,6 +782,9 @@ def run_model_scan(
     U0_init: Optional[jnp.ndarray] = None,
     V0_init: Optional[jnp.ndarray] = None,
     # Performance knobs
+    diagnostics: bool = True,
+    return_history: bool = True,
+    remat_step: bool = False,
     jit_scan: bool = True,
     donate_state: bool = False,
 ) -> Dict[str, Any]:
@@ -721,6 +820,7 @@ def run_model_scan(
         diffflag=bool(diffflag),
         expflag=bool(expflag),
         modalflag=bool(modalflag),
+        diagnostics=bool(diagnostics),
         alpha=alpha,
     )
 
@@ -881,19 +981,45 @@ def run_model_scan(
     )
 
     t_seq = jnp.arange(starttime_eff, tmax, dtype=jnp.int32)
+
+    # JIT only the time-advancement. Static/basis construction and the
+    # initialization logic remain on the Python side so we don't repeatedly
+    # compile or stage out large constant-building graphs.
+    #
+    # IMPORTANT for differentiability:
+    #   Do NOT close over potentially-traced values (static/flags/Uic/Vic)
+    #   inside the jitted function. Instead, pass them as explicit arguments.
+    donate_eff = bool(donate_state) and (not _tree_has_tracer((state0, t_seq, static, flags, Uic, Vic)))
+
+    if return_history:
+        if jit_scan:
+            simulate_fn = _get_simulate_scan_jit(test=test, donate_state=donate_eff)
+            last_state, outs = simulate_fn(state0, t_seq, static, flags, Uic, Vic)
+        else:
+            last_state, outs = simulate_scan(
+                static=static,
+                flags=flags,
+                state0=state0,
+                t_seq=t_seq,
+                test=test,
+                Uic=Uic,
+                Vic=Vic,
+            )
+
+        return dict(
+            static=static,
+            t_seq=t_seq,
+            outs=outs,
+            last_state=last_state,
+            starttime=starttime_eff,
+        )
+
+    # Final-only path: do not materialize the full trajectory.
     if jit_scan:
-        # JIT only the time-advancement. Static/basis construction and the
-        # initialization logic remain on the Python side so we don't repeatedly
-        # compile or stage out large constant-building graphs.
-        #
-        # IMPORTANT for differentiability:
-        #   Do NOT close over potentially-traced values (static/flags/Uic/Vic)
-        #   inside the jitted function. Instead, pass them as explicit arguments.
-        donate_eff = bool(donate_state) and (not _tree_has_tracer((state0, t_seq, static, flags, Uic, Vic)))
-        simulate_fn = _get_simulate_scan_jit(test=test, donate_state=donate_eff)
-        last_state, outs = simulate_fn(state0, t_seq, static, flags, Uic, Vic)
+        simulate_fn = _get_simulate_scan_last_jit(test=test, donate_state=donate_eff, remat_step=bool(remat_step))
+        last_state = simulate_fn(state0, t_seq, static, flags, Uic, Vic)
     else:
-        last_state, outs = simulate_scan(
+        last_state = simulate_scan_last(
             static=static,
             flags=flags,
             state0=state0,
@@ -901,14 +1027,102 @@ def run_model_scan(
             test=test,
             Uic=Uic,
             Vic=Vic,
+            remat_step=bool(remat_step),
         )
 
     return dict(
         static=static,
         t_seq=t_seq,
-        outs=outs,
         last_state=last_state,
         starttime=starttime_eff,
+    )
+
+
+
+def run_model_scan_final(
+    *,
+    M: int,
+    dt: Any,
+    tmax: int,
+    Phibar: Any,
+    omega: Any,
+    a: Any,
+    test: Optional[int] = None,
+    g: Any = 9.8,
+    forcflag: bool = True,
+    taurad: Any = 86400.0,
+    taudrag: Any = 86400.0,
+    DPhieq: Any = 4 * (10**6),
+    a1: Any = 0.05,
+    diffflag: bool = True,
+    modalflag: bool = True,
+    alpha: Any = 0.01,
+    expflag: bool = False,
+    K6: Any = 1.24 * (10**33),
+    K6Phi: Optional[Any] = None,
+    contflag: bool = False,
+    custompath: Optional[str] = None,
+    contTime: Optional[str] = None,
+    timeunits: str = "hours",
+    starttime: Optional[int] = None,
+    # Optional: provide explicit initial state (enables differentiating wrt ICs).
+    eta0_init: Optional[jnp.ndarray] = None,
+    delta0_init: Optional[jnp.ndarray] = None,
+    Phi0_init: Optional[jnp.ndarray] = None,
+    U0_init: Optional[jnp.ndarray] = None,
+    V0_init: Optional[jnp.ndarray] = None,
+    # Performance knobs
+    diagnostics: bool = False,
+    remat_step: bool = False,
+    jit_scan: bool = True,
+    donate_state: bool = False,
+) -> Dict[str, Any]:
+    """Run the model but return only the terminal state (no time history).
+
+    This is the recommended entrypoint for optimization/inference and forward-mode
+    autodiff (JVP/Jacobian-vector products), where you typically need only the
+    final `Phi_curr` (temperature map) and a scalar loss.
+
+    See also
+    --------
+    run_model_scan : full-history scan (plotting / diagnostics)
+    """
+
+    return run_model_scan(
+        M=M,
+        dt=dt,
+        tmax=tmax,
+        Phibar=Phibar,
+        omega=omega,
+        a=a,
+        test=test,
+        g=g,
+        forcflag=forcflag,
+        taurad=taurad,
+        taudrag=taudrag,
+        DPhieq=DPhieq,
+        a1=a1,
+        diffflag=diffflag,
+        modalflag=modalflag,
+        alpha=alpha,
+        expflag=expflag,
+        K6=K6,
+        K6Phi=K6Phi,
+        contflag=contflag,
+        custompath=custompath,
+        contTime=contTime,
+        timeunits=timeunits,
+        starttime=starttime,
+        eta0_init=eta0_init,
+        delta0_init=delta0_init,
+        Phi0_init=Phi0_init,
+        U0_init=U0_init,
+        V0_init=V0_init,
+        diagnostics=diagnostics,
+        return_history=False,
+        remat_step=remat_step,
+        jit_scan=jit_scan,
+        donate_state=donate_state,
     )
 
 

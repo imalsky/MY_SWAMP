@@ -329,6 +329,55 @@ def invrsUV(
     return Unew, Vnew
 
 
+
+def invrsUV_with_coeffs(
+    deltamn: jnp.ndarray,
+    etamn: jnp.ndarray,
+    fmn: jnp.ndarray,
+    I: int,
+    J: int,
+    M: int,
+    N: int,
+    Pmn: jnp.ndarray,
+    Hmn: jnp.ndarray,
+    tstepcoeffmn: jnp.ndarray,
+    marray: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute U,V from spectral divergence/vorticity and also return Fourier coeffs.
+
+    This is a drop-in variant of :func:`invrsUV` that avoids a redundant
+    physical→spectral FFT in the caller by returning the positive-m Fourier
+    coefficients of U and V (shape ``(J, M+1)``). These coefficients are
+    already available immediately before the inverse FFT to physical space.
+
+    Returns
+    -------
+    Unew, Vnew : jnp.ndarray
+        Physical-space winds of shape ``(J, I)`` (complex IFFT output).
+    Um_trunc, Vm_trunc : jnp.ndarray
+        Truncated Fourier coefficients (positive m only) of shape ``(J, M+1)``.
+    """
+
+    deltamn = deltamn.at[:, 0].set(0.0)
+    etamn = etamn.at[:, 0].set(0.0)
+
+    newUm1 = invrs_leg(1j * (marray * deltamn) * tstepcoeffmn, I, J, M, N, Pmn)
+    newUm2 = invrs_leg((etamn - fmn) * tstepcoeffmn, I, J, M, N, Hmn)
+
+    Um_full = -(newUm1 - newUm2)
+    Unew = invrs_fft(Um_full, I)
+    Um_trunc = Um_full[:, : (M + 1)]
+
+    newVm1 = invrs_leg(1j * (marray * (etamn - fmn)) * tstepcoeffmn, I, J, M, N, Pmn)
+    newVm2 = invrs_leg(deltamn * tstepcoeffmn, I, J, M, N, Hmn)
+
+    Vm_full = -(newVm1 + newVm2)
+    Vnew = invrs_fft(Vm_full, I)
+    Vm_trunc = Vm_full[:, : (M + 1)]
+
+    return Unew, Vnew, Um_trunc, Vm_trunc
+
+
 def diagnostic_eta_delta(
     Um: jnp.ndarray,
     Vm: jnp.ndarray,

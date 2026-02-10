@@ -65,7 +65,7 @@ def tstepping(
     """
 
     def do_explicit(_: object):
-        newPhimn, newPhitstep = exp_tdiff.phi_timestep(
+        newPhimn, newPhitstep, newPhim = exp_tdiff.phi_timestep(
             etam0,
             etam1,
             deltam0,
@@ -106,7 +106,7 @@ def tstepping(
             t,
         )
 
-        newdeltamn, newdeltatstep = exp_tdiff.delta_timestep(
+        newdeltamn, newdeltatstep, newdeltam = exp_tdiff.delta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -147,7 +147,7 @@ def tstepping(
             t,
         )
 
-        newetamn, newetatstep = exp_tdiff.eta_timestep(
+        newetamn, newetatstep, newetam = exp_tdiff.eta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -188,12 +188,12 @@ def tstepping(
             t,
         )
 
-        Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
+        Unew, Vnew, newUm, newVm = st.invrsUV_with_coeffs(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
 
-        return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
+        return newetamn, newetatstep, newetam, newdeltamn, newdeltatstep, newdeltam, newPhimn, newPhitstep, newPhim, Unew, Vnew, newUm, newVm
 
     def do_modeuler(_: object):
-        newPhimn, newPhitstep = mod_tdiff.phi_timestep(
+        newPhimn, newPhitstep, newPhim = mod_tdiff.phi_timestep(
             etam0,
             etam1,
             deltam0,
@@ -234,7 +234,7 @@ def tstepping(
             t,
         )
 
-        newdeltamn, newdeltatstep = mod_tdiff.delta_timestep(
+        newdeltamn, newdeltatstep, newdeltam = mod_tdiff.delta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -275,7 +275,7 @@ def tstepping(
             t,
         )
 
-        newetamn, newetatstep = mod_tdiff.eta_timestep(
+        newetamn, newetatstep, newetam = mod_tdiff.eta_timestep(
             etam0,
             etam1,
             deltam0,
@@ -316,9 +316,9 @@ def tstepping(
             t,
         )
 
-        Unew, Vnew = st.invrsUV(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
+        Unew, Vnew, newUm, newVm = st.invrsUV_with_coeffs(newdeltamn, newetamn, fmn, I, J, M, N, Pmn, Hmn, tstepcoeffmn, marray)
 
-        return newetamn, newetatstep, newdeltamn, newdeltatstep, newPhimn, newPhitstep, Unew, Vnew
+        return newetamn, newetatstep, newetam, newdeltamn, newdeltatstep, newdeltam, newPhimn, newPhitstep, newPhim, Unew, Vnew, newUm, newVm
 
     return jax.lax.cond(jnp.asarray(expflag), do_explicit, do_modeuler, operand=None)
 
