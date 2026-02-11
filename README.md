@@ -317,24 +317,18 @@ theta0 = jnp.array([4.0e6, 86400.0, 86400.0, 1.24e33, 600.0])
 g_fwd = jax.jacfwd(loss)(theta0)
 ```
 
-If `jax.jacfwd(loss)(theta)` is too memory-hungry (because it pushes all tangent directions at once), compute forward-mode gradients in small chunks via `jax.jvp`:
+If `jax.jacfwd(loss)(theta)` is too memory-hungry (because it pushes all tangent directions at once), compute forward-mode gradients in small chunks via JVPs.
+
+This repo provides a helper in `my_swamp.autodiff_utils`:
 
 ```python
-def fwd_grad_chunked(loss_fn, theta: jnp.ndarray, chunk: int = 2) -> jnp.ndarray:
-    p = int(theta.shape[0])
-    eye = jnp.eye(p, dtype=theta.dtype)
+from my_swamp.autodiff_utils import fwd_grad
 
-    def one_dir(v):
-        _, dl = jax.jvp(loss_fn, (theta,), (v,))
-        return dl
+# Full jacfwd (fine for ~5 params)
+g_fwd = fwd_grad(loss, theta0)
 
-    grads = []
-    for i in range(0, p, chunk):
-        grads.append(jax.vmap(one_dir)(eye[i : i + chunk]))
-    return jnp.concatenate(grads, axis=0)
-
-# Example:
-g_fwd_chunked = fwd_grad_chunked(loss, theta0, chunk=2)
+# Chunked JVPs (lower peak memory)
+g_fwd_chunked = fwd_grad(loss, theta0, chunk=2)
 ```
 
 ### 5d. Return structure and time indexing

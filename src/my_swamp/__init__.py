@@ -59,8 +59,10 @@ from . import modEuler_tdiff
 from . import time_stepping
 from . import model
 from . import main_function
+from . import autodiff_utils
 
 from .model import run_model, run_model_gpu, run_model_scan, run_model_scan_final
+from .autodiff_utils import fwd_grad
 from .main_function import main
 
 
@@ -75,11 +77,13 @@ __all__ = [
     "time_stepping",
     "model",
     "main_function",
+    "autodiff_utils",
     "run_model",
     "run_model_gpu",
     "main",
     "run_model_scan",
     "run_model_scan_final",
+    "fwd_grad",
 ]
 
 

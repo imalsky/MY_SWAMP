@@ -694,6 +694,34 @@ def _step_once(
     return jax.lax.cond(dead_next, skip_update, do_update, operand=None)
 
 
+
+
+def _step_once_state_only(
+    state: State,
+    t: jnp.ndarray,
+    static: Static,
+    flags: RunFlags,
+    test: Optional[int],
+    Uic: jnp.ndarray,
+    Vic: jnp.ndarray,
+) -> State:
+    """Single leapfrog update returning only the new `State` (no per-step outputs).
+
+    This wrapper exists to support highly efficient forward simulations in
+    optimization/inference loops where you do not need the per-step `outs`
+    dictionary. It enables `simulate_scan_last` (and user-written `fori_loop`
+    forward passes) to call a step function whose only output is the new carry.
+
+    Notes
+    -----
+    - When used under `jax.jit`, JAX/XLA will eliminate computations that only
+      contribute to the discarded outputs of `_step_once`.
+    - For maximum performance in training/inference, set `flags.diagnostics=False`
+      to skip global reductions and the blow-up gating branch.
+    """
+    new_state, _ = _step_once(state, t, static, flags, test, Uic, Vic)
+    return new_state
+
 def simulate_scan(
     *,
     static: Static,
@@ -740,9 +768,9 @@ def simulate_scan_last(
 
     def step(carry: State, t: jnp.ndarray):
         if remat_step:
-            new_state, _ = jax.checkpoint(_step_once)(carry, t, static, flags, test, Uic, Vic)
+            new_state = jax.checkpoint(_step_once_state_only)(carry, t, static, flags, test, Uic, Vic)
         else:
-            new_state, _ = _step_once(carry, t, static, flags, test, Uic, Vic)
+            new_state = _step_once_state_only(carry, t, static, flags, test, Uic, Vic)
         return new_state, ()
 
     last_state, _ = jax.lax.scan(step, state0, t_seq)
