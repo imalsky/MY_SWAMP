@@ -868,21 +868,47 @@ def run_model_scan(
     )
 
     # Determine absolute start time index.
+    #
+    # SWAMPE's continuation interface treats contTime as a numeric timestamp
+    # (typically the integer token appended to saved file names). Be permissive
+    # here and accept either an int/float or a numeric string (e.g. "50").
+    #
+    # Important: we keep the *original* contTime token for file I/O below.
+    contTime_token: Optional[str] = None
+    contTime_fallback: Optional[str] = None
+    timestamp_val: Optional[float] = None
+
+    # Normalize continuation timestamp/token if we are continuing from disk.
+    if contflag:
+        if contTime is None:
+            raise ValueError("contflag=True requires contTime.")
+
+        try:
+            timestamp_val = float(contTime)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"contTime must be numeric (int/float or numeric string), got {contTime!r}.") from e
+
+        contTime_fallback = str(contTime)
+
+        # Prefer integer formatting when the numeric value is integer-like.
+        ts_round = round(timestamp_val)
+        if abs(timestamp_val - ts_round) < 1e-12:
+            contTime_token = str(int(ts_round))
+        else:
+            contTime_token = contTime_fallback
+
     if starttime is None:
         if not contflag:
             starttime_eff = 2
         else:
-            if contTime is None:
-                raise ValueError("contflag=True requires contTime.")
-            try:
-                timestamp_int = int(contTime)
-            except (TypeError, ValueError) as e:
-                raise ValueError(f"contTime must be an int-like string, got {contTime!r}.") from e
             try:
                 dt_float = float(dt)
             except TypeError as e:
                 raise TypeError("dt must be a Python float when contflag=True (continuation uses Python I/O).") from e
-            starttime_eff = continuation.compute_t_from_timestamp(timeunits, timestamp_int, dt_float)
+
+            if timestamp_val is None:
+                raise RuntimeError("Internal error: contflag=True but contTime was not parsed.")
+            starttime_eff = continuation.compute_t_from_timestamp(timeunits, timestamp_val, dt_float)
     else:
         starttime_eff = int(starttime)
 
@@ -968,9 +994,23 @@ def run_model_scan(
         if contTime is None:
             raise ValueError("contflag=True requires contTime.")
 
-        eta0 = jnp.asarray(continuation.read_pickle(f"eta-{contTime}", custompath=custompath), dtype=float_dtype())
-        delta0 = jnp.asarray(continuation.read_pickle(f"delta-{contTime}", custompath=custompath), dtype=float_dtype())
-        Phi0 = jnp.asarray(continuation.read_pickle(f"Phi-{contTime}", custompath=custompath), dtype=float_dtype())
+        # Prefer the canonical integer token (e.g. "50") when contTime is
+        # provided as a float-like string (e.g. "50.0"), but fall back to the
+        # original string representation if the canonical name is not found.
+        cont_key = contTime_token if contTime_token is not None else str(contTime)
+        cont_fallback = str(contTime)
+
+        def _read_with_fallback(prefix: str):
+            try:
+                return continuation.read_pickle(f"{prefix}-{cont_key}", custompath=custompath)
+            except FileNotFoundError:
+                if cont_fallback != cont_key:
+                    return continuation.read_pickle(f"{prefix}-{cont_fallback}", custompath=custompath)
+                raise
+
+        eta0 = jnp.asarray(_read_with_fallback("eta"), dtype=float_dtype())
+        delta0 = jnp.asarray(_read_with_fallback("delta"), dtype=float_dtype())
+        Phi0 = jnp.asarray(_read_with_fallback("Phi"), dtype=float_dtype())
 
         etam0 = st.fwd_fft_trunc(eta0, static.I, static.M)
         etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
@@ -1282,12 +1322,77 @@ def run_model(
         geopotdata = geopotdata.at[idx, 0].set(phi_min_hist)
         geopotdata = geopotdata.at[idx, 1].set(phi_max_hist)
 
+    # Match SWAMPE: when *not* continuing from saved data, populate the
+    # initial diagnostics at index 0 from the analytic initial conditions.
+    if not contflag:
+        SU0, sina, cosa, etaamp, Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
+
+        if test in (1, 2):
+            _, _, _, _, Phi0_init_local, _ = initial_conditions.state_var_init(
+                static.I,
+                static.J,
+                static.mus,
+                static.lambdas,
+                test,
+                etaamp,
+                static.a,
+                sina,
+                cosa,
+                static.Phibar,
+                Phiamp,
+            )
+        else:
+            _, _, _, _, Phi0_init_local, _ = initial_conditions.state_var_init(
+                static.I,
+                static.J,
+                static.mus,
+                static.lambdas,
+                test,
+                etaamp,
+            )
+
+        U0_init_local, V0_init_local = initial_conditions.velocity_init(
+            static.I,
+            static.J,
+            SU0,
+            cosa,
+            sina,
+            static.mus,
+            static.lambdas,
+            test,
+        )
+
+        wind0 = jnp.sqrt(U0_init_local * U0_init_local + V0_init_local * V0_init_local)
+        spin0 = jnp.min(wind0)
+        rms0 = time_stepping.RMS_winds(
+            static.a,
+            static.I,
+            static.J,
+            static.lambdas,
+            static.mus,
+            U0_init_local,
+            V0_init_local,
+        )
+        phi_min0 = jnp.min(Phi0_init_local)
+        phi_max0 = jnp.max(Phi0_init_local)
+
+        if need_host:
+            spinupdata[0, 0] = float(np.asarray(spin0))
+            spinupdata[0, 1] = float(np.asarray(rms0))
+            geopotdata[0, 0] = float(np.asarray(phi_min0))
+            geopotdata[0, 1] = float(np.asarray(phi_max0))
+        else:
+            spinupdata = spinupdata.at[0, 0].set(spin0)
+            spinupdata = spinupdata.at[0, 1].set(rms0)
+            geopotdata = geopotdata.at[0, 0].set(phi_min0)
+            geopotdata = geopotdata.at[0, 1].set(phi_max0)
+
     # Optional saving/plotting (legacy behavior).
     if saveflag:
         for k, t in enumerate(t_seq):
             if int(t) % int(savefreq) == 0:
                 # FIXED: compute_timestamp signature is (units, t, dt)
-                timestamp = continuation.compute_timestamp(timeunits, int(t), float(dt))
+                timestamp = continuation.compute_timestamp(timeunits, int(t), dt)
                 continuation.save_data(
                     timestamp,
                     eta_hist[k],
@@ -1306,7 +1411,7 @@ def run_model(
         from . import plotting
         for k, t in enumerate(t_seq):
             if int(t) % int(plotfreq) == 0:
-                timestamp = continuation.compute_timestamp(timeunits, int(t), float(dt))
+                timestamp = continuation.compute_timestamp(timeunits, int(t), dt)
                 plotting.mean_zonal_wind_plot(U_hist[k], np.asarray(static.mus), timestamp, units=timeunits)
                 plotting.quiver_geopot_plot(
                     U_hist[k],
