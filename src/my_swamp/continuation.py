@@ -7,7 +7,6 @@ JAX DeviceArrays (which are converted to numpy when pickled).
 """
 from __future__ import annotations
 
-import os
 import pickle
 from pathlib import Path
 from typing import Any, Optional, Tuple, Union

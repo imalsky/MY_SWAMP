@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# ruff: noqa: E741
 """my_swamp.spectral_transform
 
 Spectral transform utilities for SWAMPE.
@@ -22,7 +23,8 @@ For compatibility across SciPy versions:
     * Fallback to ``numpy.polynomial.legendre.leggauss`` otherwise.
 
 - Associated Legendre polynomials and derivatives:
-    * Prefer ``scipy.special.lpmn`` when available.
+    * Prefer ``scipy.special.assoc_legendre_p_all`` when available.
+    * Fallback to ``scipy.special.lpmn`` when needed.
     * Fallback to a recurrence-based implementation that matches SciPy's
       ``lpmn`` (including the Condon–Shortley phase) up to floating round-off.
 
@@ -45,9 +47,8 @@ from .dtypes import float_dtype
 
 try:
     import scipy.special as sp
-except Exception as exc:  # pragma: no cover
+except ImportError:  # pragma: no cover
     sp = None
-    _SCIPY_IMPORT_ERROR = exc
 
 
 def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
@@ -176,8 +177,6 @@ def _lpmn_fallback(M: int, N: int, x: float) -> Tuple[np.ndarray, np.ndarray]:
     return P, dP
 
 
-
-
 def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute associated Legendre polynomials and derivatives at Gaussian latitudes.
 
@@ -194,7 +193,8 @@ def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.n
     - a sign flip for odd m (which cancels SciPy's Condon–Shortley phase)
 
     For portability across SciPy versions, we:
-    - use SciPy's ``lpmn`` when present
+    - use SciPy's ``assoc_legendre_p_all`` when present (preferred modern API)
+    - otherwise use SciPy's ``lpmn`` when present
     - otherwise fall back to `_lpmn_fallback`, which matches SciPy's output up to
       floating round-off.
     """
@@ -207,11 +207,18 @@ def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.n
     Pmntemp = np.zeros((J, M + 1, N + 1), dtype=np.float64)
     Hmntemp = np.zeros((J, M + 1, N + 1), dtype=np.float64)
 
-    use_scipy_lpmn = (sp is not None) and hasattr(sp, "lpmn")
+    use_assoc_p_all = (sp is not None) and hasattr(sp, "assoc_legendre_p_all")
+    use_scipy_lpmn = (not use_assoc_p_all) and (sp is not None) and hasattr(sp, "lpmn")
 
     for j in range(J):
         mu = float(mus_np[j])
-        if use_scipy_lpmn:
+        if use_assoc_p_all:
+            # assoc_legendre_p_all returns arrays indexed by [derivative_order, n, m]
+            # for non-negative m at columns [0..M].
+            assoc = np.asarray(sp.assoc_legendre_p_all(N, M, mu, diff_n=1), dtype=np.float64)
+            P_j = np.swapaxes(assoc[0, : (N + 1), : (M + 1)], 0, 1)
+            dP_j = np.swapaxes(assoc[1, : (N + 1), : (M + 1)], 0, 1)
+        elif use_scipy_lpmn:
             # SciPy returns (Pmn, dP/dmu) with shape (M+1, N+1)
             P_j, dP_j = sp.lpmn(M, N, mu)
         else:
@@ -241,10 +248,45 @@ def fwd_fft_trunc(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
     return datahat[:, : (M + 1)]
 
 
+def fwd_fft_trunc_batch(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
+    """Batched Fourier transform along longitude, truncating to m=0..M.
+
+    Parameters
+    ----------
+    data : (..., J, I)
+        Leading dimensions are treated as batch dimensions.
+    """
+    I = int(I)
+    M = int(M)
+    datahat = jnp.fft.fft(data / I, n=I, axis=-1)
+    return datahat[..., : (M + 1)]
+
+
 def invrs_fft(approxXim: jnp.ndarray, I: int) -> jnp.ndarray:
     """Inverse Fourier transform along longitude (expects full I coefficients)."""
     I = int(I)
     return jnp.fft.ifft(I * approxXim, n=I, axis=1)
+
+
+def weighted_legendre_basis(Pmn: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
+    """Precompute w-weighted Legendre basis used by forward transforms."""
+    return jnp.asarray(w)[:, None, None] * Pmn
+
+
+def fwd_leg_w(data: jnp.ndarray, Pmnw: jnp.ndarray) -> jnp.ndarray:
+    """Forward Legendre transform with preweighted basis."""
+    return jnp.einsum("jm,jmn->mn", data, Pmnw)
+
+
+def fwd_leg_w_batch(data: jnp.ndarray, Pmnw: jnp.ndarray) -> jnp.ndarray:
+    """Batched forward Legendre transform with preweighted basis.
+
+    Parameters
+    ----------
+    data : (K, J, M+1)
+        Batch of K Fourier fields to transform.
+    """
+    return jnp.einsum("kjm,jmn->kmn", data, Pmnw)
 
 
 def fwd_leg(
@@ -267,7 +309,7 @@ def fwd_leg(
         Gauss–Legendre weights.
     """
     # Reference implementation: out[m,n] = sum_j w[j] * data[j,m] * Pmn[j,m,n]
-    return jnp.einsum("j,jm,jmn->mn", w, data, Pmn)
+    return fwd_leg_w(data, weighted_legendre_basis(Pmn, w))
 
 
 def invrs_leg(
@@ -318,16 +360,19 @@ def invrsUV(
     deltamn = deltamn.at[:, 0].set(0.0)
     etamn = etamn.at[:, 0].set(0.0)
 
-    newUm1 = invrs_leg(1j * (marray * deltamn) * tstepcoeffmn, I, J, M, N, Pmn)
-    newUm2 = invrs_leg((etamn - fmn) * tstepcoeffmn, I, J, M, N, Hmn)
+    eta_minus_f = etamn - fmn
+    delta_scaled = deltamn * tstepcoeffmn
+    eta_scaled = eta_minus_f * tstepcoeffmn
 
-    newVm1 = invrs_leg(1j * (marray * (etamn - fmn)) * tstepcoeffmn, I, J, M, N, Pmn)
-    newVm2 = invrs_leg(deltamn * tstepcoeffmn, I, J, M, N, Hmn)
+    newUm1 = invrs_leg(1j * (marray * delta_scaled), I, J, M, N, Pmn)
+    newUm2 = invrs_leg(eta_scaled, I, J, M, N, Hmn)
+
+    newVm1 = invrs_leg(1j * (marray * eta_scaled), I, J, M, N, Pmn)
+    newVm2 = invrs_leg(delta_scaled, I, J, M, N, Hmn)
 
     Unew = -invrs_fft(newUm1 - newUm2, I)
     Vnew = -invrs_fft(newVm1 + newVm2, I)
     return Unew, Vnew
-
 
 
 def invrsUV_with_coeffs(
@@ -361,16 +406,18 @@ def invrsUV_with_coeffs(
     deltamn = deltamn.at[:, 0].set(0.0)
     etamn = etamn.at[:, 0].set(0.0)
 
-    newUm1 = invrs_leg(1j * (marray * deltamn) * tstepcoeffmn, I, J, M, N, Pmn)
-    newUm2 = invrs_leg((etamn - fmn) * tstepcoeffmn, I, J, M, N, Hmn)
+    eta_minus_f = etamn - fmn
+    delta_scaled = deltamn * tstepcoeffmn
+    eta_scaled = eta_minus_f * tstepcoeffmn
 
+    newUm1 = invrs_leg(1j * (marray * delta_scaled), I, J, M, N, Pmn)
+    newUm2 = invrs_leg(eta_scaled, I, J, M, N, Hmn)
     Um_full = -(newUm1 - newUm2)
     Unew = invrs_fft(Um_full, I)
     Um_trunc = Um_full[:, : (M + 1)]
 
-    newVm1 = invrs_leg(1j * (marray * (etamn - fmn)) * tstepcoeffmn, I, J, M, N, Pmn)
-    newVm2 = invrs_leg(deltamn * tstepcoeffmn, I, J, M, N, Hmn)
-
+    newVm1 = invrs_leg(1j * (marray * eta_scaled), I, J, M, N, Pmn)
+    newVm2 = invrs_leg(delta_scaled, I, J, M, N, Hmn)
     Vm_full = -(newVm1 + newVm2)
     Vnew = invrs_fft(Vm_full, I)
     Vm_trunc = Vm_full[:, : (M + 1)]

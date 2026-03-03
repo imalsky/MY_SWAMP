@@ -87,6 +87,8 @@ def main(
     contflag_b = bool(contflag)
     saveflag_b = bool(saveflag)
     expflag_b = bool(expflag)
+    # Accepted for legacy API compatibility with the original SWAMPE entrypoint.
+    _ = (k1, k2, pressure, R, Cp, sigmaSB)
 
     # The legacy main_function.py accepted integer test codes; in the maintained
     # SWAMPE/model.py driver, forced mode is represented as test=None.

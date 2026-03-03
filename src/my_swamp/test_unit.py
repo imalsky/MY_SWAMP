@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# ruff: noqa: E741
 """
 Unit tests for the spectral transform stack.
 
@@ -17,6 +18,9 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 from my_swamp.dtypes import float_dtype
+from my_swamp import spectral_transform as st
+from my_swamp import initial_conditions as ic
+from my_swamp import time_stepping as tstep
 
 # These tests are *numerically sensitive* because they exercise chained FFT and
 # Legendre transforms.
@@ -33,11 +37,6 @@ else:
     # absolute / O(1e-4) relative in float32 on CPU.
     _ATOL = 1e-4
     _RTOL = 2e-4
-
-from my_swamp import spectral_transform as st
-from my_swamp import initial_conditions as ic
-from my_swamp import time_stepping as tstep
-
 
 def test_init() -> None:
     N, I, J, _dt, _lambdas, _mus, _w = ic.spectral_params(42)

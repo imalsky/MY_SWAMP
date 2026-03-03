@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
+@pytest.mark.smoke
 def test_run_model_scan_smoke() -> None:
     import jax  # noqa: F401  # pylint: disable=unused-import
     from my_swamp.model import run_model_scan

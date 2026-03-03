@@ -67,6 +67,7 @@ from .main_function import main
 
 
 __all__ = [
+    "__version__",
     "continuation",
     "spectral_transform",
     "initial_conditions",

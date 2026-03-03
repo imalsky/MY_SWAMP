@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 
 # Ensure tests run on CPU in CI-like environments even if accelerators are present.
@@ -31,3 +33,22 @@ else:
 
 # Avoid aggressive preallocation in constrained CI runners.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+# Ensure imports work without requiring editable-install in the active shell.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+
+from my_swamp.backend_preflight import backend_info_lines, preflight_backend
+
+
+_TEST_BACKEND = os.environ.get("SWAMPE_TEST_BACKEND", "cpu")
+_REQUIRE_GPU = os.environ.get("SWAMPE_TEST_REQUIRE_GPU", "0").strip().lower() in {"1", "true", "yes", "on"}
+_BACKEND_INFO = preflight_backend(_TEST_BACKEND, require_gpu=_REQUIRE_GPU)
+
+
+def pytest_report_header(config):
+    return " | ".join(backend_info_lines(_BACKEND_INFO))
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "parity: regression tests against trusted SWAMPE reference outputs.")

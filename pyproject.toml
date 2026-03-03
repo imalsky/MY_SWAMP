@@ -1,3 +1,15 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.vulture]
+ignore_names = [
+    "__getattr__",
+    "load_data",
+    "complex_dtype",
+    "tree_flatten",
+    "tree_unflatten",
+    "write_quiver_gif",
+    "pytest_report_header",
+    "pytest_configure",
+]

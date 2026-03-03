@@ -1,3 +1,4 @@
+# ruff: noqa: E741
 """
 Initialization routines for SWAMPE (JAX port).
 

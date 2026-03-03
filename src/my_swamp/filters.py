@@ -8,19 +8,6 @@ import jax.numpy as jnp
 from .dtypes import float_dtype
 
 
-def modal_splitting(Xidataslice: jnp.ndarray, alpha: float) -> jnp.ndarray:
-    """
-    Applies the modal splitting filter from Hack and Jakob (1992).
-    
-    Xidataslice: shape (3, J, I) where axis 0 is time level [t-1, t, t+1]
-    Returns: filtered data at time t, shape (J, I)
-    """
-    newxi = Xidataslice[1, :, :] + alpha * (
-        Xidataslice[0, :, :] - 2 * Xidataslice[1, :, :] + Xidataslice[2, :, :]
-    )
-    return newxi
-
-
 def diffusion(Ximn: jnp.ndarray, sigma: jnp.ndarray) -> jnp.ndarray:
     """
     Applies the diffusion filter described in Gelb and Gleeson (eq. 12).
@@ -47,8 +34,7 @@ def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
     sigmacoeff = 1 + factor2 * (ncoeff - factor1)
     sigmas = 1 / sigmacoeff
     
-    # Broadcast to (M+1, N+1)
-    return jnp.tile(sigmas[None, :], (M + 1, 1))
+    return jnp.broadcast_to(sigmas[None, :], (M + 1, N + 1))
 
 
 def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
@@ -65,7 +51,7 @@ def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
     sigmacoeff = 1 + factor2 * ncoeff
     sigmas = 1 / sigmacoeff
     
-    return jnp.tile(sigmas[None, :], (M + 1, 1))
+    return jnp.broadcast_to(sigmas[None, :], (M + 1, N + 1))
 
 
 def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
@@ -85,7 +71,7 @@ def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     sigmacoeff = 1 + factor2 * (ncoeff - factor1)
     sigmas = 1 / sigmacoeff
     
-    return jnp.tile(sigmas[None, :], (M + 1, 1))
+    return jnp.broadcast_to(sigmas[None, :], (M + 1, N + 1))
 
 
 def sigma6Phi(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
@@ -102,4 +88,4 @@ def sigma6Phi(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
     sigmacoeff = 1 + factor2 * ncoeff
     sigmas = 1 / sigmacoeff
     
-    return jnp.tile(sigmas[None, :], (M + 1, 1))
+    return jnp.broadcast_to(sigmas[None, :], (M + 1, N + 1))

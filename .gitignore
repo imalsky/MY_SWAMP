@@ -112,3 +112,6 @@ secrets.*
 *.tar
 *.tar.gz
 *.tgz
+
+# Keep committed parity fixtures.
+!tests/fixtures/*.npz

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# ruff: noqa: E741
 """my_swamp.modEuler_tdiff
 
 Modified-Euler time differencing following Hack and Jakob (1992).
@@ -19,19 +20,11 @@ vectorized and differentiable.
 
 from __future__ import annotations
 
-from typing import Any, Callable
-
-import jax
 import jax.numpy as jnp
 
+from .branching import maybe_apply, select
 from . import filters
 from . import spectral_transform as st
-
-
-def _cond(pred: Any, true_fun: Callable[[Any], Any], false_fun: Callable[[Any], Any], operand: Any) -> Any:
-    """JAX-friendly conditional that also works with Python bools."""
-    return jax.lax.cond(jnp.asarray(pred), true_fun, false_fun, operand)
-
 
 def phi_timestep(
     etam0,
@@ -55,7 +48,8 @@ def phi_timestep(
     Vm,
     Pmn,
     Hmn,
-    w,
+    Pmnw,
+    Hmnw,
     tstepcoeff1,
     tstepcoeff2,
     mJarray,
@@ -80,18 +74,22 @@ def phi_timestep(
     tstep2 = tstepcoeff2 / 4.0
 
     # Use forced/non-forced A,B coupling exactly as in reference.
-    B_eff = jax.lax.select(jnp.asarray(forcflag), Bm + Fm, Bm)
-    A_eff = jax.lax.select(jnp.asarray(forcflag), Am - Gm, Am)
+    B_eff = select(forcflag, Bm + Fm, Bm)
+    A_eff = select(forcflag, Am - Gm, Am)
 
-    Phicomp1 = st.fwd_leg(Phim1, J, M, N, Pmn, w)
-    Phicomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
-    Phicomp3 = st.fwd_leg(tstep1 * Dm, J, M, N, Hmn, w)
-    Phicomp4 = dt * Phibar * st.fwd_leg(deltam1, J, M, N, Pmn, w)
-
-    deltacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * B_eff, J, M, N, Pmn, w)
-    deltacomp3 = st.fwd_leg(tstep1 * A_eff, J, M, N, Hmn, w)
-
-    deltacomp5 = st.fwd_leg(tstep2 * Em, J, M, N, Pmn, w)
+    p_terms = jnp.stack(
+        (
+            Phim1,
+            tstep1 * (1j) * mJarray * Cm,
+            deltam1,
+            tstep1 * (1j) * mJarray * B_eff,
+            tstep2 * Em,
+        ),
+        axis=0,
+    )
+    Phicomp1, Phicomp2, delta_leg, deltacomp2, deltacomp5 = st.fwd_leg_w_batch(p_terms, Pmnw)
+    Phicomp3, deltacomp3 = st.fwd_leg_w_batch(jnp.stack((tstep1 * Dm, tstep1 * A_eff), axis=0), Hmnw)
+    Phicomp4 = dt * Phibar * delta_leg
     deltacomp5 = narray * deltacomp5
 
     Phimntstep = (
@@ -105,11 +103,11 @@ def phi_timestep(
     )
 
     def _add_forcing(x):
-        Phiforcing = st.fwd_leg(dt * PhiFm, J, M, N, Pmn, w)
+        Phiforcing = st.fwd_leg_w(dt * PhiFm, Pmnw)
         return x + Phiforcing
 
-    Phimntstep = _cond(forcflag, _add_forcing, lambda x: x, Phimntstep)
-    Phimntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigmaPhi), lambda x: x, Phimntstep)
+    Phimntstep = maybe_apply(forcflag, _add_forcing, Phimntstep)
+    Phimntstep = maybe_apply(diffflag, lambda x: filters.diffusion(x, sigmaPhi), Phimntstep)
 
     newPhimtstep = st.invrs_leg(Phimntstep, I, J, M, N, Pmn)
     newPhim_trunc = newPhimtstep[:, : (M + 1)]
@@ -140,7 +138,8 @@ def delta_timestep(
     Vm,
     Pmn,
     Hmn,
-    w,
+    Pmnw,
+    Hmnw,
     tstepcoeff1,
     tstepcoeff2,
     mJarray,
@@ -168,18 +167,20 @@ def delta_timestep(
     B_force = Bm + Fm
     A_force = Am - Gm
 
-    deltacomp1 = st.fwd_leg(deltam1, J, M, N, Pmn, w)
-    deltacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * B_force, J, M, N, Pmn, w)
-    deltacomp3 = st.fwd_leg(tstep1 * A_force, J, M, N, Hmn, w)
-
-    deltacomp4 = st.fwd_leg(tstep2 * Phim1, J, M, N, Pmn, w)
+    p_terms = jnp.stack(
+        (
+            deltam1,
+            tstep1 * (1j) * mJarray * B_force,
+            tstep2 * Phim1,
+            tstep2 * Em,
+            tstep1 * (1j) * mJarray * Cm,
+        ),
+        axis=0,
+    )
+    deltacomp1, deltacomp2, deltacomp4, deltacomp5, Phicomp2 = st.fwd_leg_w_batch(p_terms, Pmnw)
+    deltacomp3, Phicomp3 = st.fwd_leg_w_batch(jnp.stack((tstep1 * A_force, tstep1 * Dm), axis=0), Hmnw)
     deltacomp4 = narray * deltacomp4
-
-    deltacomp5 = st.fwd_leg(tstep2 * Em, J, M, N, Pmn, w)
     deltacomp5 = narray * deltacomp5
-
-    Phicomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * Cm, J, M, N, Pmn, w)
-    Phicomp3 = st.fwd_leg(tstep1 * Dm, J, M, N, Hmn, w)
 
     deltamntstep = (
         deltacomp1
@@ -193,11 +194,11 @@ def delta_timestep(
 
     def _add_forcing(x):
         # Reference SWAMPE includes dt/2 here.
-        Phiforcing = (narray * st.fwd_leg((dt / 2.0) * PhiFm, J, M, N, Pmn, w)) / (a**2)
+        Phiforcing = (narray * st.fwd_leg_w((dt / 2.0) * PhiFm, Pmnw)) / (a**2)
         return x + Phiforcing
 
-    deltamntstep = _cond(forcflag, _add_forcing, lambda x: x, deltamntstep)
-    deltamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, deltamntstep)
+    deltamntstep = maybe_apply(forcflag, _add_forcing, deltamntstep)
+    deltamntstep = maybe_apply(diffflag, lambda x: filters.diffusion(x, sigma), deltamntstep)
 
     newdeltamtstep = st.invrs_leg(deltamntstep, I, J, M, N, Pmn)
     newdeltam_trunc = newdeltamtstep[:, : (M + 1)]
@@ -228,7 +229,8 @@ def eta_timestep(
     Vm,
     Pmn,
     Hmn,
-    w,
+    Pmnw,
+    Hmnw,
     tstepcoeff1,
     tstepcoeff2,
     mJarray,
@@ -248,18 +250,16 @@ def eta_timestep(
 ):
     """Modified-Euler update for absolute vorticity eta (reference SWAMPE parity)."""
 
-    forc_pred = jnp.asarray(forcflag)
     # Reference SWAMPE quirk: forced branch uses unscaled tstepcoeff1; unforced uses /2.
-    tstep1 = jax.lax.select(forc_pred, tstepcoeff1, tstepcoeff1 / 2.0)
-    A_eff = jax.lax.select(forc_pred, Am - Gm, Am)
-    B_eff = jax.lax.select(forc_pred, Bm + Fm, Bm)
+    tstep1 = select(forcflag, tstepcoeff1, tstepcoeff1 / 2.0)
+    A_eff = select(forcflag, Am - Gm, Am)
+    B_eff = select(forcflag, Bm + Fm, Bm)
 
-    etacomp1 = st.fwd_leg(etam1, J, M, N, Pmn, w)
-    etacomp2 = st.fwd_leg(tstep1 * (1j) * mJarray * A_eff, J, M, N, Pmn, w)
-    etacomp3 = st.fwd_leg(tstep1 * B_eff, J, M, N, Hmn, w)
+    etacomp1, etacomp2 = st.fwd_leg_w_batch(jnp.stack((etam1, tstep1 * (1j) * mJarray * A_eff), axis=0), Pmnw)
+    etacomp3 = st.fwd_leg_w(tstep1 * B_eff, Hmnw)
 
     etamntstep = etacomp1 - etacomp2 + etacomp3
-    etamntstep = _cond(diffflag, lambda x: filters.diffusion(x, sigma), lambda x: x, etamntstep)
+    etamntstep = maybe_apply(diffflag, lambda x: filters.diffusion(x, sigma), etamntstep)
 
     newetamtstep = st.invrs_leg(etamntstep, I, J, M, N, Pmn)
     newetam_trunc = newetamtstep[:, : (M + 1)]

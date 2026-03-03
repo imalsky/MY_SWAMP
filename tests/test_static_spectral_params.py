@@ -1,8 +1,11 @@
+# ruff: noqa: E741
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
+@pytest.mark.smoke
 def test_spectral_params_shapes() -> None:
     import jax  # noqa: F401  # pylint: disable=unused-import
     from my_swamp import initial_conditions as ic

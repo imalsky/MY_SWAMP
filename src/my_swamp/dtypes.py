@@ -31,8 +31,6 @@ import ordering in interactive sessions.
 
 from __future__ import annotations
 
-from typing import Any
-
 try:
     import jax
     import jax.numpy as jnp
@@ -49,16 +47,6 @@ try:
         """Return the package complex dtype (complex64 or complex128)."""
         return jnp.complex128 if x64_enabled() else jnp.complex64
 
-    INT_DTYPE = jnp.int32
-
-    def as_real(x: Any):
-        """Convert to a JAX scalar/array with the package float dtype."""
-        return jnp.asarray(x, dtype=float_dtype())
-
-    def as_complex(x: Any):
-        """Convert to a JAX scalar/array with the package complex dtype."""
-        return jnp.asarray(x, dtype=complex_dtype())
-
 except Exception:  # pragma: no cover
     # Allow import in environments where JAX isn't installed (docs, packaging).
     import numpy as np  # type: ignore
@@ -71,11 +59,3 @@ except Exception:  # pragma: no cover
 
     def complex_dtype():
         return np.complex128
-
-    INT_DTYPE = np.int32
-
-    def as_real(x: Any):
-        return np.asarray(x, dtype=float_dtype())
-
-    def as_complex(x: Any):
-        return np.asarray(x, dtype=complex_dtype())

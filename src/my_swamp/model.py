@@ -1,3 +1,4 @@
+# ruff: noqa: E741
 """my_swamp.model
 
 JAX rewrite of SWAMPE's main driver (spectral shallow-water model).
@@ -35,6 +36,7 @@ import jax.numpy as jnp
 from .dtypes import float_dtype
 import numpy as np
 
+from .branching import cond
 
 from . import continuation
 from . import filters
@@ -42,11 +44,11 @@ from . import forcing
 from . import initial_conditions
 from . import spectral_transform as st
 from . import time_stepping
- 
 
 
 def _is_python_scalar(x: Any) -> bool:
     return isinstance(x, (int, float, np.floating))
+
 
 def _tree_has_tracer(pytree: Any) -> bool:
     """Return True if any leaf in `pytree` is a JAX tracer."""
@@ -54,8 +56,6 @@ def _tree_has_tracer(pytree: Any) -> bool:
         if isinstance(leaf, jax.core.Tracer):
             return True
     return False
-
-
 
 
 @lru_cache(maxsize=None)
@@ -169,6 +169,8 @@ class Static:
 
     Pmn: jnp.ndarray
     Hmn: jnp.ndarray
+    Pmnw: jnp.ndarray
+    Hmnw: jnp.ndarray
 
     fmn: jnp.ndarray
 
@@ -199,6 +201,8 @@ class Static:
             self.w,
             self.Pmn,
             self.Hmn,
+            self.Pmnw,
+            self.Hmnw,
             self.fmn,
             self.tstepcoeff,
             self.tstepcoeff2,
@@ -229,6 +233,8 @@ class Static:
             w,
             Pmn,
             Hmn,
+            Pmnw,
+            Hmnw,
             fmn,
             tstepcoeff,
             tstepcoeff2,
@@ -257,6 +263,8 @@ class Static:
             w=w,
             Pmn=Pmn,
             Hmn=Hmn,
+            Pmnw=Pmnw,
+            Hmnw=Hmnw,
             fmn=fmn,
             tstepcoeff=tstepcoeff,
             tstepcoeff2=tstepcoeff2,
@@ -309,6 +317,26 @@ class State(NamedTuple):
     dead: jnp.ndarray  # bool scalar
 
 
+def _dedupe_state_for_donation(state: State) -> State:
+    """Clone aliased array leaves so JAX buffer donation can succeed.
+
+    JAX donation rejects pytrees that contain the same underlying array object
+    in multiple leaf positions. Our two-level initialization intentionally
+    starts with prev==curr values, which can alias at the object level.
+    """
+    seen_ids: set[int] = set()
+
+    def _dedupe_leaf(x: Any) -> Any:
+        if isinstance(x, jax.Array):
+            obj_id = id(x)
+            if obj_id in seen_ids:
+                return jnp.copy(x)
+            seen_ids.add(obj_id)
+        return x
+
+    return jax.tree_util.tree_map(_dedupe_leaf, state)
+
+
 def build_static(
     *,
     M: int,
@@ -327,6 +355,8 @@ def build_static(
     """Build time-invariant arrays (quadrature, basis, diffusion, coefficients)."""
 
     N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray = _cached_geometry(int(M))
+    Pmnw = st.weighted_legendre_basis(Pmn, w)
+    Hmnw = st.weighted_legendre_basis(Hmn, w)
 
     # Keep scalars as JAX values to preserve differentiability.
     dt_j = jnp.asarray(dt, dtype=float_dtype())
@@ -371,6 +401,8 @@ def build_static(
         w=w,
         Pmn=Pmn,
         Hmn=Hmn,
+        Pmnw=Pmnw,
+        Hmnw=Hmnw,
         fmn=fmn,
         tstepcoeff=tstepcoeff,
         tstepcoeff2=tstepcoeff2,
@@ -418,23 +450,16 @@ def _nonlinear_spectral(
 
     # Match the reference SWAMPE ordering and semantics:
     #   ABCDE_init(U, V, eta, Phi, mus, I, J)
-    # The physical-space fields coming out of the spectral stack are complex
-    # (IFFT), but should be real to roundoff; SWAMPE explicitly takes `real(...)`
-    # before forming nonlinear products.
     A, B, C, D, E = initial_conditions.ABCDE_init(
-        jnp.real(U),
-        jnp.real(V),
-        jnp.real(eta),
-        jnp.real(Phi),
+        U,
+        V,
+        eta,
+        Phi,
         static.mus,
         static.I,
         static.J,
     )
-    Am = st.fwd_fft_trunc(A, static.I, static.M)
-    Bm = st.fwd_fft_trunc(B, static.I, static.M)
-    Cm = st.fwd_fft_trunc(C, static.I, static.M)
-    Dm = st.fwd_fft_trunc(D, static.I, static.M)
-    Em = st.fwd_fft_trunc(E, static.I, static.M)
+    Am, Bm, Cm, Dm, Em = st.fwd_fft_trunc_batch(jnp.stack((A, B, C, D, E), axis=0), static.I, static.M)
     return Am, Bm, Cm, Dm, Em
 
 
@@ -455,15 +480,10 @@ def _init_state_from_fields(
     PhiF0, F0, G0 = _forcing_phys(static=static, flags=flags, test=test, Phi=Phi0, U=U0, V=V0)
 
     # Fourier truncations.
-    etam0 = st.fwd_fft_trunc(eta0, static.I, static.M)
-    deltam0 = st.fwd_fft_trunc(delta0, static.I, static.M)
-    Phim0 = st.fwd_fft_trunc(Phi0, static.I, static.M)
-    Um0 = st.fwd_fft_trunc(U0, static.I, static.M)
-    Vm0 = st.fwd_fft_trunc(V0, static.I, static.M)
-
-    PhiFm0 = st.fwd_fft_trunc(PhiF0, static.I, static.M)
-    Fm0 = st.fwd_fft_trunc(F0, static.I, static.M)
-    Gm0 = st.fwd_fft_trunc(G0, static.I, static.M)
+    etam0, deltam0, Phim0, Um0, Vm0 = st.fwd_fft_trunc_batch(
+        jnp.stack((eta0, delta0, Phi0, U0, V0), axis=0), static.I, static.M
+    )
+    PhiFm0, Fm0, Gm0 = st.fwd_fft_trunc_batch(jnp.stack((PhiF0, F0, G0), axis=0), static.I, static.M)
 
     Am0, Bm0, Cm0, Dm0, Em0 = _nonlinear_spectral(static=static, eta=eta0, Phi=Phi0, U=U0, V=V0)
 
@@ -568,7 +588,8 @@ def _step_once(
             static.fmn,
             static.Pmn,
             static.Hmn,
-            static.w,
+            static.Pmnw,
+            static.Hmnw,
             static.tstepcoeff,
             static.tstepcoeff2,
             static.tstepcoeffmn,
@@ -630,9 +651,7 @@ def _step_once(
 
         # Build forcing and nonlinear terms for the NEXT step (based on the new state).
         PhiF2, F2, G2 = _forcing_phys(static=static, flags=flags, test=test, Phi=newPhi, U=newU, V=newV)
-        PhiFm2 = st.fwd_fft_trunc(PhiF2, I, M)
-        Fm2 = st.fwd_fft_trunc(F2, I, M)
-        Gm2 = st.fwd_fft_trunc(G2, I, M)
+        PhiFm2, Fm2, Gm2 = st.fwd_fft_trunc_batch(jnp.stack((PhiF2, F2, G2), axis=0), I, M)
 
         Am2, Bm2, Cm2, Dm2, Em2 = _nonlinear_spectral(static=static, eta=neweta, Phi=newPhi, U=newU, V=newV)
 
@@ -691,9 +710,9 @@ def _step_once(
         )
         return new_state, out
 
-    return jax.lax.cond(dead_next, skip_update, do_update, operand=None)
-
-
+    if not flags.diagnostics:
+        return do_update(None)
+    return cond(dead_next, skip_update, do_update, operand=None)
 
 
 def _step_once_state_only(
@@ -741,7 +760,6 @@ def simulate_scan(
     return last_state, outs
 
 
-
 def simulate_scan_last(
     *,
     static: Static,
@@ -766,11 +784,14 @@ def simulate_scan_last(
       (checkpointed) to trade compute for memory (mostly useful for reverse-mode).
     """
 
+    step_core = _step_once_state_only
+    if remat_step:
+        # `test` is a Python control selector inside `_step_once`; mark it static
+        # for checkpointed traces so Python branching remains valid.
+        step_core = jax.checkpoint(_step_once_state_only, static_argnums=(4,))
+
     def step(carry: State, t: jnp.ndarray):
-        if remat_step:
-            new_state = jax.checkpoint(_step_once_state_only)(carry, t, static, flags, test, Uic, Vic)
-        else:
-            new_state = _step_once_state_only(carry, t, static, flags, test, Uic, Vic)
+        new_state = step_core(carry, t, static, flags, test, Uic, Vic)
         return new_state, ()
 
     last_state, _ = jax.lax.scan(step, state0, t_seq)
@@ -943,9 +964,8 @@ def run_model_scan(
                     raise ValueError(f"{name} must have shape {expected_shape}, got {arr.shape}.")
         else:
             # Diagnose winds from eta/delta (continuation path).
-            etam0 = st.fwd_fft_trunc(eta0, static.I, static.M)
+            etam0, deltam0 = st.fwd_fft_trunc_batch(jnp.stack((eta0, delta0), axis=0), static.I, static.M)
             etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
-            deltam0 = st.fwd_fft_trunc(delta0, static.I, static.M)
             deltamn0 = st.fwd_leg(deltam0, static.J, static.M, static.N, static.Pmn, static.w)
 
             Uc, Vc = st.invrsUV(
@@ -1012,9 +1032,8 @@ def run_model_scan(
         delta0 = jnp.asarray(_read_with_fallback("delta"), dtype=float_dtype())
         Phi0 = jnp.asarray(_read_with_fallback("Phi"), dtype=float_dtype())
 
-        etam0 = st.fwd_fft_trunc(eta0, static.I, static.M)
+        etam0, deltam0 = st.fwd_fft_trunc_batch(jnp.stack((eta0, delta0), axis=0), static.I, static.M)
         etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
-        deltam0 = st.fwd_fft_trunc(delta0, static.I, static.M)
         deltamn0 = st.fwd_leg(deltam0, static.J, static.M, static.N, static.Pmn, static.w)
 
         Uc, Vc = st.invrsUV(
@@ -1058,6 +1077,11 @@ def run_model_scan(
     #   Do NOT close over potentially-traced values (static/flags/Uic/Vic)
     #   inside the jitted function. Instead, pass them as explicit arguments.
     donate_eff = bool(donate_state) and (not _tree_has_tracer((state0, t_seq, static, flags, Uic, Vic)))
+    if donate_eff:
+        state0 = _dedupe_state_for_donation(state0)
+        # Avoid aliasing a donated state buffer with non-donated explicit args.
+        Uic = jnp.copy(Uic)
+        Vic = jnp.copy(Vic)
 
     if return_history:
         if jit_scan:
@@ -1104,7 +1128,6 @@ def run_model_scan(
         last_state=last_state,
         starttime=starttime_eff,
     )
-
 
 
 def run_model_scan_final(
@@ -1441,6 +1464,8 @@ def run_model(
         mus=np.asarray(static.mus) if need_host else static.mus,
         t_seq=t_seq,
     )
+
+
 def run_model_gpu(*args, **kwargs) -> Dict[str, Any]:
     """GPU/AD-friendly wrapper around :func:`run_model`.
 

@@ -95,6 +95,13 @@ class Config:
     M: int = 42
     dt_seconds: float = 240.0
     model_days: float = 50.0
+    # Optional steady-state convergence mode. When enabled, SWAMP is advanced in
+    # chunks until terminal Phi changes by less than tolerance or max_days is hit.
+    adaptive_convergence: bool = False
+    convergence_check_every_days: float = 5.0
+    convergence_max_days: float = 200.0
+    convergence_atol_phi: float = 1.0e-3
+    convergence_rtol_phi: float = 1.0e-6
     starttime_index: int = 2  # leapfrog start index (>=2)
 
     # -----------------------
@@ -353,6 +360,14 @@ if str(cfg.ns_inner_kernel).strip().lower() not in _valid_ns_inner_kernels:
 
 if cfg.model_days <= 0:
     raise ValueError("cfg.model_days must be > 0")
+if cfg.convergence_check_every_days <= 0:
+    raise ValueError("cfg.convergence_check_every_days must be > 0")
+if cfg.convergence_max_days <= 0:
+    raise ValueError("cfg.convergence_max_days must be > 0")
+if cfg.convergence_max_days < cfg.convergence_check_every_days:
+    raise ValueError("cfg.convergence_max_days must be >= cfg.convergence_check_every_days")
+if cfg.convergence_atol_phi < 0 or cfg.convergence_rtol_phi < 0:
+    raise ValueError("cfg.convergence_atol_phi and cfg.convergence_rtol_phi must be >= 0")
 if cfg.dt_seconds <= 0:
     raise ValueError("cfg.dt_seconds must be > 0")
 if cfg.starttime_index < 2:
@@ -403,21 +418,21 @@ logger = logging.getLogger("swamp_run")
 # =============================================================================
 
 
-import jax
-import jax.numpy as jnp
+import jax  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
 
 jax.config.update("jax_enable_x64", cfg.use_x64)
 
 # my_swamp
-import my_swamp.model as swamp_model
-from my_swamp.model import RunFlags, build_static
+import my_swamp.model as swamp_model  # noqa: E402
+from my_swamp.model import RunFlags, build_static  # noqa: E402
 
 # starry via jaxoplanet
-from jaxoplanet.orbits.keplerian import Body, Central
-from jaxoplanet.starry.light_curves import light_curve as starry_light_curve
-from jaxoplanet.starry.orbit import SurfaceSystem
-from jaxoplanet.starry.surface import Surface
-from jaxoplanet.starry.ylm import Ylm
+from jaxoplanet.orbits.keplerian import Body, Central  # noqa: E402
+from jaxoplanet.starry.light_curves import light_curve as starry_light_curve  # noqa: E402
+from jaxoplanet.starry.orbit import SurfaceSystem  # noqa: E402
+from jaxoplanet.starry.surface import Surface  # noqa: E402
+from jaxoplanet.starry.ylm import Ylm  # noqa: E402
 
 # blackjax
 try:
@@ -431,6 +446,13 @@ except Exception as e:  # pragma: no cover
 logger.info(f"JAX backend: {jax.default_backend()}")
 logger.info(f"JAX devices: {jax.devices()}")
 logger.info(f"BlackJAX version: {getattr(blackjax, '__version__', 'unknown')}")
+logger.info(
+    "Plot defaults: fig_dpi=%d render_res=%d render_phases=%s log_axis_orders_threshold=%.3f",
+    int(cfg.fig_dpi),
+    int(cfg.render_res),
+    tuple(cfg.render_phases),
+    float(cfg.log_axis_orders_threshold),
+)
 
 
 # =============================================================================
@@ -764,12 +786,20 @@ flags = call_with_filtered_kwargs(
     name="RunFlags",
 )
 
-I = int(getattr(static_base, "I", -1))
-J = int(getattr(static_base, "J", -1))
-logger.info(f"SWAMP grid: I={I}, J={J}, M={getattr(static_base,'M','?')}, N={getattr(static_base,'N','?')}")
+n_lon = int(getattr(static_base, "I", -1))
+n_lat = int(getattr(static_base, "J", -1))
+logger.info(f"SWAMP grid: I={n_lon}, J={n_lat}, M={getattr(static_base,'M','?')}, N={getattr(static_base,'N','?')}")
 
 n_steps = compute_n_steps(cfg.model_days, cfg.dt_seconds)
 logger.info(f"SWAMP integration length: model_days={cfg.model_days} -> n_steps={n_steps} (dt={cfg.dt_seconds}s)")
+if cfg.adaptive_convergence:
+    logger.info(
+        "Adaptive convergence enabled: check_every_days=%.3f max_days=%.3f atol=%.3g rtol=%.3g",
+        cfg.convergence_check_every_days,
+        cfg.convergence_max_days,
+        cfg.convergence_atol_phi,
+        cfg.convergence_rtol_phi,
+    )
 
 t_seq = jnp.arange(cfg.starttime_index, cfg.starttime_index + n_steps, dtype=jnp.int32)
 
@@ -1201,44 +1231,73 @@ def swamp_terminal_phi(
         )
         state0, U0, V0 = build_state0(static)
 
-    # Prefer a terminal-only scan if available.
-    sim_last = getattr(swamp_model, "simulate_scan_last", None) or getattr(swamp_model, "run_model_scan_final", None)
-    if sim_last is not None:
-        # We support both APIs by filtering kwargs.
-        kwargs = dict(
-            static=static,
-            flags=flags,
-            state0=state0,
-            t_seq=t_seq,
-            test=None,
-            Uic=U0,
-            Vic=V0,
-            remat_step=False,
-            # run_model_scan_final-style args (ignored if not present)
-            jit_scan=True,
-            return_history=False,
-        )
-        out = call_with_filtered_kwargs(sim_last, kwargs, name=getattr(sim_last, "__name__", "simulate_scan_last"))
-        # simulate_scan_last returns last_state; run_model_scan_final returns dict with 'last_state'
-        last_state = out
-        if isinstance(out, dict) and "last_state" in out:
-            last_state = out["last_state"]
-        return getattr(last_state, "Phi_curr")
+    def _run_terminal_for_tseq(state_init: Any, t_seq_local: jnp.ndarray) -> Any:
+        # Prefer a terminal-only scan if available.
+        sim_last = getattr(swamp_model, "simulate_scan_last", None) or getattr(swamp_model, "run_model_scan_final", None)
+        if sim_last is not None:
+            kwargs = dict(
+                static=static,
+                flags=flags,
+                state0=state_init,
+                t_seq=t_seq_local,
+                test=None,
+                Uic=U0,
+                Vic=V0,
+                remat_step=False,
+                # run_model_scan_final-style args (ignored if not present)
+                jit_scan=True,
+                return_history=False,
+            )
+            out = call_with_filtered_kwargs(sim_last, kwargs, name=getattr(sim_last, "__name__", "simulate_scan_last"))
+            if isinstance(out, dict) and "last_state" in out:
+                return out["last_state"]
+            return out
 
-    # Fallback: fori_loop stepping
-    step_fn = getattr(swamp_model, "_step_once_state_only", None)
-    if step_fn is None:
-        raise RuntimeError(
-            "Could not find simulate_scan_last/run_model_scan_final nor _step_once_state_only in my_swamp.model; "
-            "cannot run SWAMP forward."
-        )
+        # Fallback: fori_loop stepping
+        step_fn = getattr(swamp_model, "_step_once_state_only", None)
+        if step_fn is None:
+            raise RuntimeError(
+                "Could not find simulate_scan_last/run_model_scan_final nor _step_once_state_only in my_swamp.model; "
+                "cannot run SWAMP forward."
+            )
 
-    def body(i: int, st: Any) -> Any:
-        t = t_seq[i]
-        return step_fn(st, t, static, flags, None, U0, V0)
+        def body(i: int, st: Any) -> Any:
+            t = t_seq_local[i]
+            return step_fn(st, t, static, flags, None, U0, V0)
 
-    state_f = jax.lax.fori_loop(0, int(t_seq.shape[0]), body, state0)
-    return getattr(state_f, "Phi_curr")
+        return jax.lax.fori_loop(0, int(t_seq_local.shape[0]), body, state_init)
+
+    if not cfg.adaptive_convergence:
+        return getattr(_run_terminal_for_tseq(state0, t_seq), "Phi_curr")
+
+    # Optional steady-state convergence mode. This is Python-loop driven and
+    # therefore intended for non-jitted exploratory runs.
+    min_steps = int(n_steps)
+    chunk_steps = max(1, int(compute_n_steps(cfg.convergence_check_every_days, cfg.dt_seconds)))
+    max_steps = max(chunk_steps, int(compute_n_steps(cfg.convergence_max_days, cfg.dt_seconds)))
+
+    state_curr = state0
+    phi_prev: Optional[jnp.ndarray] = None
+    steps_done = 0
+    while steps_done < max_steps:
+        steps_this_chunk = min(chunk_steps, max_steps - steps_done)
+        t_start = int(cfg.starttime_index + steps_done)
+        t_stop = int(t_start + steps_this_chunk)
+        t_seq_local = jnp.arange(t_start, t_stop, dtype=jnp.int32)
+        state_curr = _run_terminal_for_tseq(state_curr, t_seq_local)
+        phi_curr = getattr(state_curr, "Phi_curr")
+        steps_done += steps_this_chunk
+
+        if phi_prev is not None and steps_done >= min_steps:
+            diff = float(np.max(np.abs(np.asarray(phi_curr - phi_prev))))
+            scale = float(np.max(np.abs(np.asarray(phi_prev))))
+            tol = float(cfg.convergence_atol_phi + cfg.convergence_rtol_phi * max(1.0, scale))
+            if np.isfinite(diff) and diff <= tol:
+                break
+
+        phi_prev = phi_curr
+
+    return getattr(state_curr, "Phi_curr")
 
 
 # =============================================================================
@@ -1320,6 +1379,8 @@ logger.info(
     str(cfg.map_projection_mode).strip().lower(),
     _ref_map_monopole_f,
 )
+_projection_mode_str = str(cfg.map_projection_mode).strip().lower()
+_adaptive_mode_str = "adaptive_convergence" if cfg.adaptive_convergence else "fixed_days"
 
 
 def phase_curve_model(theta: jnp.ndarray) -> jnp.ndarray:
@@ -1404,7 +1465,11 @@ def phase_curve_model(theta: jnp.ndarray) -> jnp.ndarray:
 
 
 
-phase_curve_model_jit = jax.jit(phase_curve_model)
+if cfg.adaptive_convergence:
+    logger.warning("Adaptive convergence enabled: disabling forward-model JIT for dynamic stop logic.")
+    phase_curve_model_jit = phase_curve_model
+else:
+    phase_curve_model_jit = jax.jit(phase_curve_model)
 
 
 # =============================================================================
@@ -1414,7 +1479,6 @@ phase_curve_model_jit = jax.jit(phase_curve_model)
 
 prior_lo = jnp.asarray(param_prior_lo, dtype=float_dtype())
 prior_hi = jnp.asarray(param_prior_hi, dtype=float_dtype())
-prior_width = prior_hi - prior_lo
 
 
 def theta_from_u(u: jnp.ndarray) -> jnp.ndarray:
@@ -1499,6 +1563,9 @@ if cfg.generate_synthetic_data or not obs_path.exists():
         orbital_period_days=float(orbital_period_days_base),
         inferred_param_names=np.asarray(param_names, dtype="<U64"),
         inferred_param_truth=np.asarray(param_truth, dtype=np.float64),
+        map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+        map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+        swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
     )
     logger.info(f"Saved observations to: {obs_path}")
 else:
@@ -1925,10 +1992,13 @@ if cfg.run_inference:
         else:
             dead_points.append(dead_now)
 
-    def _log_nss_progress(step_index: int, *, step_dt: float, state_now: Any, prefix: str = "") -> float:
-        integrator_now = state_now.integrator
-        logZ = float(jax.device_get(integrator_now.logZ))
-        logZ_live = float(jax.device_get(integrator_now.logZ_live))
+    def _integrator_logz_pair(integrator_now: Any) -> Tuple[float, float]:
+        # Fetch both scalars in one transfer to minimize host/device sync overhead.
+        logz_pair = jax.device_get(jnp.stack((integrator_now.logZ, integrator_now.logZ_live)))
+        logz_pair_np = np.asarray(logz_pair, dtype=np.float64)
+        return float(logz_pair_np[0]), float(logz_pair_np[1])
+
+    def _log_nss_progress(step_index: int, *, step_dt: float, logZ: float, logZ_live: float, prefix: str = "") -> float:
         dlogZ = logZ_live - logZ
 
         step_times.append(step_dt)
@@ -1968,7 +2038,8 @@ if cfg.run_inference:
     first_dt = time.perf_counter() - t_step0
     _store_dead(dead)
     n_steps_done = 1
-    dlogZ = _log_nss_progress(1, step_dt=first_dt, state_now=live_state, prefix="warmup")
+    logZ0, logZ_live0 = _integrator_logz_pair(live_state.integrator)
+    dlogZ = _log_nss_progress(1, step_dt=first_dt, logZ=logZ0, logZ_live=logZ_live0, prefix="warmup")
 
     if dlogZ < target_dlogz:
         logger.info("NSS: termination criterion reached after the first step (remaining evidence is negligible).")
@@ -1986,16 +2057,19 @@ if cfg.run_inference:
             n_steps_done = step_index
 
             should_log = (step_index <= 5) or (step_index % log_every == 0)
-            integrator = live_state.integrator
-            dlogZ = float(jax.device_get(integrator.logZ_live - integrator.logZ)) if should_log else float("nan")
+            # Keep host sync sparse: evaluate stop criterion on the same cadence
+            # as explicit progress checkpoints.
             if should_log:
-                dlogZ = _log_nss_progress(step_index, step_dt=step_dt, state_now=live_state)
-
-            if (not math.isnan(dlogZ) and dlogZ < target_dlogz) or (
-                should_log is False and float(jax.device_get(integrator.logZ_live - integrator.logZ)) < target_dlogz
-            ):
-                logger.info("NSS: termination criterion reached (remaining evidence is negligible).")
-                break
+                logZ_step, logZ_live_step = _integrator_logz_pair(live_state.integrator)
+                dlogZ = _log_nss_progress(
+                    step_index,
+                    step_dt=step_dt,
+                    logZ=logZ_step,
+                    logZ_live=logZ_live_step,
+                )
+                if dlogZ < target_dlogz:
+                    logger.info("NSS: termination criterion reached (remaining evidence is negligible).")
+                    break
 
             if cfg.ns_max_dead_points is not None and n_steps_done * n_delete >= int(cfg.ns_max_dead_points):
                 logger.info("NSS: reached cfg.ns_max_dead_points; stopping.")
@@ -2079,6 +2153,9 @@ if cfg.run_inference:
         inferred_param_names=np.asarray(param_names, dtype="<U64"),
         inferred_param_labels=np.asarray(param_labels, dtype="<U64"),
         inferred_param_truth=np.asarray(param_truth, dtype=np.float64),
+        map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+        map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+        swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
     )
     logger.info(f"Saved posterior samples to: {samples_path}")
 
@@ -2103,6 +2180,9 @@ if cfg.run_inference:
         ns_runtime_seconds=np.asarray(runtime_val, dtype=np.float64),
         inferred_param_names=np.asarray(param_names, dtype="<U64"),
         inferred_param_truth=np.asarray(param_truth, dtype=np.float64),
+        map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+        map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+        swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
     )
     logger.info(f"Saved NSS diagnostics to: {extra_path}")
 
@@ -2150,8 +2230,23 @@ if cfg.do_ppc:
         "p95": np.quantile(ppc_draws, 0.95, axis=0),
     }
 
-    save_npz(ppc_path, ppc_draws=ppc_draws, theta_sel=theta_sel, times_days=times_days)
-    save_npz(ppc_quant_path, **ppc_q, times_days=times_days)
+    save_npz(
+        ppc_path,
+        ppc_draws=ppc_draws,
+        theta_sel=theta_sel,
+        times_days=times_days,
+        map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+        map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+        swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
+    )
+    save_npz(
+        ppc_quant_path,
+        **ppc_q,
+        times_days=times_days,
+        map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+        map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+        swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
+    )
 
     logger.info(f"Saved PPC draws to: {ppc_path}")
     logger.info(f"Saved PPC quantiles to: {ppc_quant_path}")
@@ -2212,6 +2307,35 @@ theta_flat = np.asarray(s["samples"]).reshape(-1, n_dim)
 theta_median = np.median(theta_flat, axis=0).astype(np_float_dtype())
 theta_median_jax = jnp.asarray(theta_median, dtype=float_dtype())
 
+ident_path = cfg.out_dir / "identifiability_diagnostics.npz"
+if theta_flat.shape[0] >= 2:
+    cov = np.atleast_2d(np.cov(theta_flat, rowvar=False))
+    corr = np.atleast_2d(np.corrcoef(theta_flat, rowvar=False))
+else:
+    cov = np.zeros((n_dim, n_dim), dtype=np.float64)
+    corr = np.eye(n_dim, dtype=np.float64)
+
+corr = np.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
+eigvals = np.linalg.eigvalsh(cov) if n_dim > 1 else np.asarray([float(cov[0, 0])], dtype=np.float64)
+eig_abs_min = float(np.min(np.abs(eigvals)))
+eig_abs_max = float(np.max(np.abs(eigvals)))
+condition_number = np.inf if eig_abs_min <= 0.0 else eig_abs_max / eig_abs_min
+max_abs_offdiag_corr = 0.0 if n_dim < 2 else float(np.max(np.abs(corr - np.eye(n_dim))))
+
+save_npz(
+    ident_path,
+    inferred_param_names=np.asarray(param_names, dtype="<U64"),
+    covariance=cov,
+    correlation=corr,
+    covariance_eigenvalues=eigvals,
+    covariance_condition_number=np.asarray(condition_number, dtype=np.float64),
+    max_abs_offdiag_correlation=np.asarray(max_abs_offdiag_corr, dtype=np.float64),
+    map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+    map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+    swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
+)
+logger.info(f"Saved identifiability diagnostics to: {ident_path}")
+
 post_maps = compute_maps_for_theta(theta_median_jax)
 
 save_npz(
@@ -2231,6 +2355,9 @@ save_npz(
     inferred_param_names=np.asarray(param_names, dtype="<U64"),
     inferred_param_truth=np.asarray(param_truth, dtype=np.float64),
     inferred_param_post_median=np.asarray(theta_median, dtype=np.float64),
+    map_projection_mode=np.asarray(_projection_mode_str, dtype="<U32"),
+    map_reference_monopole=np.asarray(_ref_map_monopole_f, dtype=np.float64),
+    swamp_integration_mode=np.asarray(_adaptive_mode_str, dtype="<U32"),
 )
 logger.info(f"Saved truth + posterior-median maps to: {maps_path}")
 

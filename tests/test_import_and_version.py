@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import pytest
 
 
+@pytest.mark.smoke
 def test_import_and_version() -> None:
     # JAX is a required runtime dependency for the numerical core.
     import jax  # noqa: F401  # pylint: disable=unused-import

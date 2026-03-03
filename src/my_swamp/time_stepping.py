@@ -1,7 +1,8 @@
+# ruff: noqa: E741
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
+from .branching import cond
 from .dtypes import float_dtype
 
 from . import explicit_tdiff as exp_tdiff
@@ -32,7 +33,8 @@ def tstepping(
     fmn,
     Pmn,
     Hmn,
-    w,
+    Pmnw,
+    Hmnw,
     tstepcoeff,
     tstepcoeff2,
     tstepcoeffmn,
@@ -61,7 +63,7 @@ def tstepping(
     The explicit and modified-Euler implementations are written to reproduce the
     reference NumPy SWAMPE behavior as closely as possible.
 
-    Scheme selection uses `jax.lax.cond` so `expflag` can be a traced JAX boolean.
+    Scheme selection specializes to a Python branch when `expflag` is static.
     """
 
     def do_explicit(_: object):
@@ -87,7 +89,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -128,7 +131,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -169,7 +173,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -215,7 +220,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -256,7 +262,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -297,7 +304,8 @@ def tstepping(
             Vm,
             Pmn,
             Hmn,
-            w,
+            Pmnw,
+            Hmnw,
             tstepcoeff,
             tstepcoeff2,
             mJarray,
@@ -320,7 +328,7 @@ def tstepping(
 
         return newetamn, newetatstep, newetam, newdeltamn, newdeltatstep, newdeltam, newPhimn, newPhitstep, newPhim, Unew, Vnew, newUm, newVm
 
-    return jax.lax.cond(jnp.asarray(expflag), do_explicit, do_modeuler, operand=None)
+    return cond(expflag, do_explicit, do_modeuler, operand=None)
 
 
 def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
@@ -329,17 +337,17 @@ def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
     coeff = coeff.at[0].set(1.0)
     tstep = a / coeff
     tstep = tstep.at[0].set(0.0)
-    return jnp.tile(tstep[None, :], (M + 1, 1))
+    return jnp.broadcast_to(tstep[None, :], (M + 1, N + 1))
 
 
 def tstepcoeff2(J: int, M: int, dt: float, a: float) -> jnp.ndarray:
-    return jnp.ones((J, M + 1), dtype=float_dtype()) * (2.0 * dt / (a**2))
+    return jnp.full((J, M + 1), 2.0 * dt / (a**2), dtype=float_dtype())
 
 
 def narray(M: int, N: int) -> jnp.ndarray:
     n = jnp.arange(N + 1, dtype=float_dtype())
     nnp1 = n * (n + 1)
-    return jnp.tile(nnp1[None, :], (M + 1, 1))
+    return jnp.broadcast_to(nnp1[None, :], (M + 1, N + 1))
 
 
 def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.ndarray:
@@ -347,17 +355,17 @@ def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.nda
     # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1), so
     # no division-by-zero guard is applied.
     base = (2.0 * dt) / (a * (1.0 - mu**2))  # (J,1)
-    return jnp.tile(base, (1, M + 1))
+    return jnp.broadcast_to(base, (J, M + 1))
 
 
 def mJarray(J: int, M: int) -> jnp.ndarray:
     m = jnp.arange(M + 1, dtype=float_dtype())[None, :]
-    return jnp.tile(m, (J, 1))
+    return jnp.broadcast_to(m, (J, M + 1))
 
 
 def marray(M: int, N: int) -> jnp.ndarray:
     m = jnp.arange(M + 1, dtype=float_dtype())[:, None]
-    return jnp.tile(m, (1, N + 1))
+    return jnp.broadcast_to(m, (M + 1, N + 1))
 
 
 def RMS_winds(a: float, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, U: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:

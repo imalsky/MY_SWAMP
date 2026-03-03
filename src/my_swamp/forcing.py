@@ -1,3 +1,4 @@
+# ruff: noqa: E741
 """
 This module contains the functions used for the evaluation of stellar forcing (insolation).
 Matches the original SWAMPE numpy implementation exactly.
@@ -71,10 +72,6 @@ def Rfun(
     Ru = -U * Qclone / phi_total
     Rv = -V * Qclone / phi_total
     
-    # Reset to 0 if losing mass (Q < 0)
-    Ru = jnp.where(Q < 0, 0.0, Ru)
-    Rv = jnp.where(Q < 0, 0.0, Rv)
-    
     # Handle taudrag == -1 case (no Rayleigh drag) without Python branching.
     taudrag_arr = jnp.asarray(taudrag)
     no_drag = taudrag_arr == -1
@@ -87,4 +84,3 @@ def Rfun(
     G = jnp.where(no_drag, Rv, G_drag)
 
     return F, G
-
