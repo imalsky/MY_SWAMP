@@ -1,198 +1,116 @@
 # MY_SWAMP Specification
 
-Last updated: 2026-03-03 (PST)
+Last updated: 2026-03-03 (America/Los_Angeles)
+Project root: `/Users/imalsky/Desktop/SWAMPE_Project/MY_SWAMP`
 
-## Environment Note
+This document is scoped to `MY_SWAMP` only.
 
-All verification in this document was run from:
+## 1) Goal
 
-1. Conda environment: `swamp_compare`
-2. Python: `3.10.19`
-3. Project root: `/Users/imalsky/Desktop/SWAMPE_Project/MY_SWAMP`
+`MY_SWAMP` is the JAX rewrite of SWAMPE. The project goal is to keep SWAMPE physics/numerics behavior for default runs while providing a differentiable, package-first implementation suitable for retrieval workflows.
 
-Command used for env verification:
+Primary objectives:
 
-1. `conda run -n swamp_compare python -V`
-2. `conda run -n swamp_compare which python`
+1. Preserve reference behavior against legacy `SWAMPE` for default settings.
+2. Keep the solver differentiable (JAX-first, scan-based time stepping).
+3. Maintain stable, testable APIs for both history and terminal-state simulation.
+4. Improve runtime efficiency without changing the locked parity behavior.
 
+## 2) Scope
 
-## 1) Goal and Scope
+In scope:
 
-This specification covers:
+1. `src/my_swamp/*` solver, transforms, forcing, filtering, and model drivers.
+2. `tests/*` and `testing/*` parity/smoke/benchmark validation.
+3. Retrieval-facing notebook utilities under `notebooks/` that consume `my_swamp`.
 
-1. Core solver parity + performance in `src/my_swamp`
-2. Retrieval forward-model behavior in `notebooks/nss.py`
+Out of scope for this spec:
 
-Primary goals:
+1. `gcmulator` package architecture/training policy.
+2. `torch-harmonics-main` library development.
+3. Cross-repo orchestration scripts at workspace root.
 
-1. Preserve SWAMPE physical outputs (strict parity target for default settings).
-2. Keep implementation differentiable and JAX-accelerated.
-3. Improve runtime/compile efficiency without changing physics.
-4. Support steady-state terminal-map retrieval workflows.
+## 3) Locked Parity Contract (Do Not Change Without Re-baselining)
 
+The following behaviors are parity-critical and intentionally fixed:
 
-## 1.1) Locked Decisions (2026-03-02)
+1. Modified-Euler `Phi`/`Delta` effective `/4` coefficient behavior.
+2. Modified-Euler `Delta` forced-term usage in both branches.
+3. Modified-Euler `Eta` forced vs unforced asymmetry.
+4. Explicit `Delta` carry-over-only update behavior.
+5. Explicit `Eta`/`Delta` extra drag-linked forcing terms.
+6. Dayside strict-inequality behavior in equilibrium forcing mask.
+7. `Q < 0` clamp and `taudrag == -1` forcing semantics.
+8. Legendre normalization/sign conventions used for transforms.
+9. Inverse-Legendre negative-`m` layout and symmetry behavior.
+10. Two-level initialization and Robert-Asselin update behavior.
+11. Float64 parity mode requirement for reference-comparison runs.
 
-1. Strict parity scope is default settings only.
-2. Parity reference is original `SWAMPE` outputs.
-3. `model_days` remains user-controlled.
+## 4) Public API Contract
 
+Key runtime APIs:
 
-## 2) Definition of "Exact Same Results"
+1. `my_swamp.model.run_model(...)`
+2. `my_swamp.model.run_model_scan(...)`
+3. `my_swamp.model.run_model_scan_final(...)`
 
-"Exact" means:
+Expected terminal state fields:
 
-1. Same equations/behavior as reference SWAMPE.
-2. Tolerance-based parity in float64 (`jax_enable_x64=True`) for matched inputs.
-3. Retrieval-level parity (terminal map and projected light curve) within strict tolerances.
+1. `Phi`
+2. `U`
+3. `V`
+4. `eta`
+5. `delta`
 
-Bitwise identity across NumPy CPU and XLA backends is not required.
+Initial-condition override support must remain available through explicit inputs (`eta0_init`, `delta0_init`, `Phi0_init`, `U0_init`, `V0_init`) where exposed by the scan drivers.
 
+## 5) Retrieval Workflow Contract
 
-## 3) Spec Adherence Status (Code-Verified)
+Current retrieval workflow in `notebooks/nss.py` is steady-state oriented.
 
-### 3.1 Requirements now satisfied
+1. Terminal-map usage is intentional (`swamp_terminal_phi` path).
+2. `map_projection_mode="shape_plus_amplitude"` keeps monopole amplitude.
+3. `map_projection_mode="shape_only"` intentionally drops amplitude.
+4. Adaptive convergence stopping in the outer loop is optional and config-driven.
 
-1. Backend preflight checks exist and are exercised in tests/benchmark entry points.
-2. End-to-end parity regression tests versus trusted SWAMPE fixtures exist.
-3. Parity mode is explicitly x64-gated in tests (parity tests fail in x32 mode by design).
-4. Deterministic benchmark harness exists and reports compile/runtime/per-step metrics.
-5. Retrieval-level parity checks for terminal-map projection are in the test suite.
-6. High-impact efficiency updates were applied in `MY_SWAMP`:
-   - static-flag branch specialization
-   - batched FFT/Legendre transforms
-   - weighted Legendre basis precompute
-   - dead explicit-delta transform removal
-   - broadcast replacements for prior `tile` patterns
-   - redundant mask/real pass cleanup
-7. Deprecated SciPy `lpmn` runtime path was replaced with `assoc_legendre_p_all` (with fallbacks), eliminating deprecation warnings in verification runs.
-8. Full-project lint check now passes on the validated paths (`src`, `tests`, `testing`, `notebooks/nss.py`).
-9. Previously-open performance correctness blockers were fixed:
-   - `donate_state=True` no longer triggers XLA donation alias errors.
-   - `remat_step=True` no longer fails for numeric `test` values.
-   - NSS outer-loop stop checks no longer force host sync on every non-logging step.
+## 6) Runtime and Precision Policy
 
-### 3.2 Still open or intentionally deferred
+1. Float64 mode is required for parity-grade comparisons (`SWAMPE_JAX_ENABLE_X64=1`).
+2. Backend preflight checks are part of the supported runtime path.
+3. CPU backend (`JAX_PLATFORMS=cpu`) is the default validation target for deterministic CI-style checks on this workspace.
+4. Performance options (for example donation/remat toggles) are allowed only when behavior remains parity-safe.
 
-1. Local GPU runtime validation is blocked on this machine (`jax-metal` reports no supported GPU).
+## 7) Verification Baseline
 
+Validation commands for this repository:
 
-## 4) Parity-Critical Contract (Do Not Change Behavior)
+1. `JAX_PLATFORMS=cpu pytest --collect-only -q`
+2. `JAX_PLATFORMS=cpu pytest -q`
+3. `JAX_PLATFORMS=cpu pytest -q -m smoke`
+4. `JAX_PLATFORMS=cpu pytest -q -m parity`
+5. `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity` (expected parity failures; validates x64 gate)
+6. `ruff check src tests testing notebooks/nss.py`
 
-These behaviors remain locked for SWAMPE parity:
+## 8) Repository Map (MY_SWAMP Only)
 
-1. Modified-Euler Phi/Delta effective `/4` coefficient behavior.
-2. Modified-Euler Delta forced-term usage in both branches.
-3. Modified-Euler Eta forced/unforced asymmetry.
-4. Explicit Delta carry-over-only update.
-5. Explicit Eta/Delta extra drag-linked forcing terms.
-6. Dayside strict inequality in equilibrium forcing mask.
-7. `Q < 0` clamp and `taudrag == -1` semantics in forcing.
-8. Legendre normalization/sign conventions.
-9. Inverse Legendre negative-m layout and symmetry.
-10. Two-level initialization and Robert-Asselin behavior.
-11. Float64 parity mode for reference-comparison runs.
+Core package modules under `src/my_swamp/`:
 
+1. `model.py` (main scan drivers and wrappers)
+2. `spectral_transform.py` (quadrature, transforms, inversion helpers)
+3. `time_stepping.py`, `modEuler_tdiff.py`, `explicit_tdiff.py`
+4. `forcing.py`, `filters.py`, `initial_conditions.py`
+5. `autodiff_utils.py`, `backend_preflight.py`, `plotting.py`
 
-## 5) Retrieval Pipeline Clarifications (Steady-State)
+Validation paths:
 
-1. Terminal `Phi` usage is intentional (`swamp_terminal_phi` path).
-2. This is a steady-state retrieval pipeline, not transient fitting.
-3. `map_projection_mode="shape_plus_amplitude"` preserves monopole amplitude.
-4. `shape_only` intentionally discards amplitude.
-5. Optional adaptive convergence stopping is implemented and validated in config checks.
-6. Saved run artifacts include projection/integration metadata and identifiability diagnostics.
+1. `tests/` (packaging, smoke, parity regressions)
+2. `testing/` (benchmark and fixture tooling)
 
+## 9) Change Control
 
-## 6) Executed Verification Matrix (Environment + Model)
+Any PR that changes locked numerical behavior must:
 
-All commands below were run in `swamp_compare` on 2026-03-03 with `JAX_PLATFORMS=cpu` for stability.
-
-### 6.1 Test collection (what exists)
-
-1. `JAX_PLATFORMS=cpu conda run -n swamp_compare pytest --collect-only -q`
-2. Result: 20 tests collected, including:
-   - Environment/backend tests: `tests/test_backend_preflight.py`
-   - Core model smoke: `tests/test_model_scan_smoke.py`
-   - Static/grid checks: `tests/test_static_spectral_params.py`
-   - Legacy transform/unit suite: `src/my_swamp/test_unit.py`
-   - Parity quirk regressions: `tests/test_parity_quirks.py`
-   - SWAMPE fixture parity regressions: `tests/test_parity_reference_regression.py`
-
-### 6.2 Full suite
-
-1. `JAX_PLATFORMS=cpu conda run -n swamp_compare pytest -q`
-2. Result: `20 passed`
-
-### 6.3 Marker suites
-
-1. `JAX_PLATFORMS=cpu conda run -n swamp_compare pytest -q -m smoke`
-2. Result: `5 passed, 15 deselected`
-3. `JAX_PLATFORMS=cpu conda run -n swamp_compare pytest -q -m parity`
-4. Result: `4 passed, 16 deselected`
-
-### 6.4 x64 parity gating check
-
-1. `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 conda run -n swamp_compare pytest -q -m parity`
-2. Result: `4 failed` with explicit assertion requiring float64 mode.
-
-### 6.5 Benchmark harness
-
-1. `JAX_PLATFORMS=cpu conda run -n swamp_compare python testing/benchmark_scan.py --backend cpu --M 42 --dt 30 --tmax 30 --test 1 --forcflag false --diffflag false --timed-runs 2 --warmup-runs 1`
-2. Result snapshot:
-   - `result.compile_seconds=1.281907`
-   - `result.runtime_median_seconds=0.048284`
-   - `result.per_step_median_ms=1.724434`
-3. Retrieval-oriented knob sweep (`tmax=120`, sequential runs):
-   - baseline (`diagnostics=false, donate=false, remat=false`): `per_step_median_ms=1.425232`
-   - `donate=true`: `per_step_median_ms=1.427316`
-   - `remat=true`: `per_step_median_ms=1.432047`
-4. Interpretation for this CPU runtime:
-   - `donate` and `remat` are now stable but do not improve throughput at this workload scale.
-   - Keep `diagnostics=false` for retrieval/inference loops unless explicit blow-up diagnostics are required.
-
-### 6.6 Lint/dead-code checks
-
-1. `conda run -n swamp_compare ruff check src tests testing notebooks/nss.py --select F401,F841`
-2. Result: `All checks passed`
-3. `conda run -n swamp_compare ruff check src tests testing notebooks/nss.py`
-4. Result: `All checks passed`
-5. `conda run -n swamp_compare python -m vulture src tests testing notebooks/nss.py`
-6. Result: `no findings` after explicit ignore-list triage for known API hooks/callback surfaces.
-
-
-## 7) Correctness Assessment
-
-Given the current test matrix and parity fixtures:
-
-1. Default-path behavior is correct relative to the documented parity target.
-2. Retrieval projection behavior is covered by reference tests.
-3. No correctness regressions were observed after latest cleanup edits.
-
-Boundaries:
-
-1. GPU correctness/performance validation remains pending on hardware with a working GPU backend.
-
-
-## 8) Dead-Code Assessment
-
-Removed in previous passes:
-
-1. Unused import in `src/my_swamp/continuation.py`.
-2. Unused local in `notebooks/nss.py` (`prior_width`).
-3. Unused variable assignment in `src/my_swamp/plotting.py` (`colorbar` binding only).
-
-Removed in latest pass:
-
-4. Unused `_SCIPY_IMPORT_ERROR` variable in `src/my_swamp/spectral_transform.py`.
-5. Dead `modal_splitting` function in `src/my_swamp/filters.py` (Robert-Asselin filter is computed inline in `model.py`).
-6. Unused `INT_DTYPE`, `as_real`, `as_complex` from `src/my_swamp/dtypes.py`.
-7. Extra blank lines and trailing whitespace in core source files.
-
-Dead-code scan is now clean on the validated paths after explicit triage of known API-hook/callback symbols.
-
-
-## 9) Known Intentional Divergences
-
-1. Continuation timestamp call-ordering fix in `model.py`.
-2. `invrsUV_with_coeffs` optimization helper to avoid redundant FFT work.
+1. Explicitly call out the behavior change.
+2. Update/add parity fixtures and regression tests.
+3. Re-run parity + smoke markers.
+4. Update this spec and `readme.md` sections affected by the change.

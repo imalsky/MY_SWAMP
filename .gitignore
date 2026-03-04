@@ -21,6 +21,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.pyre/
+.tox/
+.nox/
+.cache/
 .coverage
 .coverage.*
 htmlcov/
@@ -41,6 +46,7 @@ env/
 .conda/
 conda-env/
 envs/
+.python-version
 
 # === Jupyter ===
 .ipynb_checkpoints/
@@ -75,6 +81,21 @@ datasets/
 *.zarr/
 *.pkl
 *.pickle
+*.joblib
+*.parquet
+*.feather
+*.arrow
+*.pt
+*.pth
+*.onnx
+
+# Notebook run-output folders: keep config files, ignore generated artifacts.
+notebooks/*_outputs/**
+!notebooks/*_outputs/
+!notebooks/*_outputs/config.json
+!notebooks/*_outputs/config.yaml
+!notebooks/*_outputs/config.yml
+!notebooks/*_outputs/config.toml
 
 # === Model / run artifacts ===
 runs/
@@ -88,7 +109,6 @@ xla_dump_*/
 xla/
 xla_cache/
 jax_cache/
-.cache/
 .jax/
 .jax_cache/
 /tmp/
