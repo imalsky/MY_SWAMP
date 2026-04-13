@@ -29,7 +29,7 @@ def _bool_arg(x: str) -> bool:
 
 
 def _run_once(args: argparse.Namespace):
-    """Execute one benchmark run and block on the terminal state."""
+    """Execute one benchmark run and block on the final state."""
     res = run_model_scan_final(
         M=args.M,
         dt=args.dt,
@@ -53,7 +53,7 @@ def _run_once(args: argparse.Namespace):
         jit_scan=True,
         donate_state=args.donate_state,
     )
-    # Block on terminal map to include full runtime.
+    # Block on final result to include full runtime.
     _ = res["last_state"].Phi_curr.block_until_ready()
 
 

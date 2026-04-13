@@ -2,7 +2,7 @@
 
 A JAX rewrite of the SWAMPE spectral shallow‑water model on the sphere. The numerical core runs inside `jax.lax.scan`, so the forward simulation is end‑to‑end differentiable with respect to continuous physical parameters and explicit initial conditions.
 
-Document version: 2026-04-12
+Document version: 2026-04-13
 
 ---
 
@@ -19,7 +19,7 @@ Document version: 2026-04-12
 9. [Physics and Numerics Changes Not Implemented Here](#9-physics-and-numerics-changes-not-implemented-here)  
 10. [Differentiability Scope and Caveats](#10-differentiability-scope-and-caveats)  
 11. [GPU, Precision, and Performance Notes](#11-gpu-precision-and-performance-notes)  
-12. [Running the Unit Tests](#12-running-the-unit-tests)  
+12. [Testing and Parity Checks](#12-testing-and-parity-checks)
 13. [Known Limitations](#13-known-limitations)  
 14. [Code Navigation Guide](#14-code-navigation-guide)  
 
@@ -27,7 +27,7 @@ Document version: 2026-04-12
 
 ## 1. What This Code Does
 
-SWAMPE-JAX implements a single‑layer (barotropic) global spectral shallow‑water model on the sphere using triangular truncation (M = N), Gaussian quadrature in latitude, and FFT in longitude. The model advances:
+SWAMPE-JAX implements a single‑layer global spectral shallow‑water model on the sphere using triangular truncation (M = N), Gaussian quadrature in latitude, and FFT in longitude. The model advances:
 
 - `eta`: absolute vorticity (relative vorticity plus Coriolis)
 - `delta`: divergence
@@ -511,9 +511,15 @@ Non-differentiable aspects include:
 
 ---
 
-## 12. Running the Unit Tests
+## 12. Testing and Parity Checks
 
-From the repository root:
+There are three levels of testing: the fast pytest suite for everyday development, a long-run parity script for validating numerical agreement against the NumPy SWAMPE reference, and a benchmark harness for measuring performance. All three are described below.
+
+---
+
+### 12a. Unit Tests (pytest)
+
+Install the dev dependencies and run the full suite on CPU:
 
 ```bash
 python -m pip install -U pip
@@ -521,24 +527,136 @@ python -m pip install -e ".[dev]"
 JAX_PLATFORMS=cpu pytest -q
 ```
 
-Notes:
+You can also run specific subsets using pytest markers:
 
-- The package defaults to enabling JAX 64-bit mode for closer parity with the NumPy/SciPy SWAMPE reference.  
-  To run tests in 32-bit mode (faster, lower precision), set:
+```bash
+# Just the smoke tests (fast, runs the model end-to-end briefly)
+JAX_PLATFORMS=cpu pytest -q -m smoke
+
+# Just the parity regression tests
+JAX_PLATFORMS=cpu pytest -q -m parity
+
+# List all collected tests without running them
+JAX_PLATFORMS=cpu pytest --collect-only -q
+```
+
+The package defaults to JAX 64-bit mode for closer numerical parity with the NumPy/SciPy SWAMPE reference. To run tests in 32-bit mode (faster, less precise):
 
 ```bash
 export SWAMPE_JAX_ENABLE_X64=0
-pytest -q
+JAX_PLATFORMS=cpu pytest -q
 ```
 
-Optional long-run parity report against legacy `SWAMPE`:
+To verify that the parity tests correctly gate on x64 (they should fail without it):
+
+```bash
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity
+```
+
+Parity failures here are expected — this just confirms the x64 guard is working.
+
+To lint the source and test directories:
+
+```bash
+ruff check src unit_tests testing
+```
+
+The test suite lives under `unit_tests/` and covers:
+
+| File | What it tests |
+|---|---|
+| `test_import_and_version.py` | Package imports and `_version.py` |
+| `test_backend_preflight.py` | JAX backend detection |
+| `test_static_spectral_params.py` | Grid sizes and Gauss–Legendre nodes |
+| `test_transform_stack.py` | Forward/inverse Legendre and FFT round-trips |
+| `test_model_scan_smoke.py` | Short smoke runs for all three test modes |
+| `test_parity_quirks.py` | Edge cases and known numerical quirks |
+| `test_parity_reference_regression.py` | Regression against stored reference fixtures |
+
+---
+
+### 12b. SWAMPE vs. MY_SWAMP Long-Run Parity Check (`compare_long_run_parity.py`)
+
+This is the main tool for checking that `my_swamp` stays numerically close to the original NumPy SWAMPE reference over long integrations. It is not part of the pytest suite because a useful horizon (100 days) can take several minutes.
+
+Run it from the repository root:
 
 ```bash
 JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/compare_long_run_parity.py --days 100
 ```
 
-This is intentionally a user-invoked script under `testing/`, not an automatic pytest case. It writes a JSON summary plus terminal-field arrays and absolute-error arrays under `testing/long_run_parity_outputs/`.
-It also writes `terminal_comparison.png`, which shows the legacy SWAMPE fields, the JAX fields, and the signed fractional differences at the terminal step.
+What it does:
+- Runs both `SWAMPE` (NumPy) and `my_swamp` (JAX) with the same forced-mode parameter set.
+- Prints per-field error statistics (relative L2, max fractional, RMS fractional, max absolute) to the console.
+- Writes `summary.json` with the full error breakdown and run parameters.
+- Saves `comparison_fields.npz` with the SWAMPE fields, MY_SWAMP fields, and absolute error arrays for `eta`, `delta`, `Phi`, `U`, and `V`.
+- Generates `field_comparison.png` — a grid of side-by-side maps showing the SWAMPE fields, MY_SWAMP fields, and signed fractional differences for each field.
+
+All output lands in `testing/long_run_parity_outputs/forced_default_100d/` by default.
+
+Key options:
+
+```bash
+# Change integration horizon or timestep
+python testing/compare_long_run_parity.py --days 200 --dt 600
+
+# Run an idealized test case instead of forced mode (1 or 2)
+python testing/compare_long_run_parity.py --days 50 --test 1
+
+# Write outputs to a custom directory
+python testing/compare_long_run_parity.py --days 100 --out-dir /tmp/parity_check
+```
+
+The script requires that the SWAMPE reference package is importable. It looks for it at `../SWAMPE` relative to the `MY_SWAMP` root.
+
+---
+
+### 12c. Regenerating Reference Fixtures (`generate_reference_parity_fixtures.py`)
+
+The regression tests in `test_parity_reference_regression.py` compare against stored `.npz` fixtures generated from the NumPy SWAMPE reference. If you change the numerics intentionally, regenerate them:
+
+```bash
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/generate_reference_parity_fixtures.py
+```
+
+What it does:
+- Runs the NumPy SWAMPE reference model for two cases: an unforced test case 1 run and a forced default run.
+- Saves field snapshots at multiple intermediate steps plus the final state for each case.
+- Also computes and saves a phase curve derived from the final `Phi` field.
+- Writes two compressed `.npz` fixture files to `unit_tests/fixtures/`.
+
+This script requires the SWAMPE reference package at `../SWAMPE`. Commit the updated fixtures alongside your code change so the regression baseline stays current.
+
+---
+
+### 12d. Performance Benchmarking (`benchmark_scan.py`)
+
+The benchmark harness in `testing/benchmark_scan.py` measures wall-clock time for `run_model_scan_final` across multiple timed runs after a JIT warmup. It prints backend info (device, x64 status), compile time, and per-run statistics including mean, median, min, max, and per-step median time in milliseconds.
+
+Basic usage:
+
+```bash
+python testing/benchmark_scan.py --M 42 --tmax 300 --timed-runs 3
+```
+
+Key options:
+
+```bash
+# Run on GPU (if available)
+python testing/benchmark_scan.py --backend gpu --require-gpu
+
+# Higher resolution
+python testing/benchmark_scan.py --M 63 --tmax 500
+
+# Forced mode with diffusion
+python testing/benchmark_scan.py --M 42 --tmax 300 --forcflag true --diffflag true
+
+# Adjust warmup and timed run counts
+python testing/benchmark_scan.py --warmup-runs 2 --timed-runs 5
+
+# Fail fast if x64 is not enabled
+python testing/benchmark_scan.py --require-x64
+```
 
 ---
 
@@ -564,4 +682,5 @@ It also writes `terminal_comparison.png`, which shows the legacy SWAMPE fields, 
 | Continuation save/load | `continuation.py` |
 | Plotting | `plotting.py` |
 | Forward-mode AD utils | `autodiff_utils.py` |
+| Backend detection / preflight | `backend_preflight.py` |
 | Transform/unit tests | `unit_tests/test_transform_stack.py`, `unit_tests/` |

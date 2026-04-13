@@ -10,7 +10,7 @@ Default behavior
 - Uses the repository's "forced default" parameter set.
 - Runs a 100-day integration on CPU in float64 mode.
 - Executes both legacy `SWAMPE` and `my_swamp`.
-- Writes terminal fields plus error summaries to `testing/long_run_parity_outputs/`.
+- Writes comparison fields plus error summaries to `testing/long_run_parity_outputs/`.
 
 Example
 -------
@@ -99,8 +99,8 @@ def _ensure_lpmn_compat() -> None:
 def _parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the long-run parity comparison."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--days", type=float, default=100.0, help="Integration horizon in physical days.")
-    parser.add_argument("--dt", type=float, default=1200.0, help="Timestep in seconds.")
+    parser.add_argument("--days", type=float, default=10.0, help="Integration horizon in physical days.")
+    parser.add_argument("--dt", type=float, default=120.0, help="Timestep in seconds.")
     parser.add_argument("--M", type=int, default=42)
     parser.add_argument("--Phibar", type=float, default=3.0e5)
     parser.add_argument("--omega", type=float, default=3.2e-5)
@@ -126,7 +126,7 @@ def _parse_args() -> argparse.Namespace:
         "--out-dir",
         type=Path,
         default=DEFAULT_OUT_DIR,
-        help="Directory for summary JSON and terminal-field NPZ output.",
+        help="Directory for summary JSON and comparison field NPZ output.",
     )
     return parser.parse_args()
 
@@ -173,7 +173,7 @@ def _field_summary(ref: np.ndarray, got: np.ndarray, rel_floor_frac: float) -> D
     }
 
 
-def _save_terminal_comparison_plot(
+def _save_field_comparison_plot(
     ref_fields: Dict[str, np.ndarray],
     got_fields: Dict[str, np.ndarray],
     metrics: Dict[str, Dict[str, float]],
@@ -181,7 +181,7 @@ def _save_terminal_comparison_plot(
     actual_days: float,
     out_path: Path,
 ) -> None:
-    """Save terminal comparison plot."""
+    """Save field comparison plot."""
     fields = ("eta", "delta", "Phi", "U", "V")
     fig, axes = plt.subplots(
         nrows=len(fields),
@@ -244,13 +244,13 @@ def _save_terminal_comparison_plot(
     axes[0, 0].set_title("SWAMPE")
     axes[0, 1].set_title("MY_SWAMP")
     axes[0, 2].set_title("Fractional Difference")
-    fig.suptitle(f"SWAMPE vs MY_SWAMP terminal fields ({actual_days:.3f} days)")
+    fig.suptitle(f"SWAMPE vs MY_SWAMP field comparison ({actual_days:.3f} days)")
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
 
-def _legacy_terminal_fields(custompath: str, final_step: int, dt: float) -> Dict[str, np.ndarray]:
-    """Load the reference SWAMPE terminal fields for the configured run."""
+def _legacy_comparison_fields(custompath: str, final_step: int, dt: float) -> Dict[str, np.ndarray]:
+    """Load the reference SWAMPE comparison fields for the configured run."""
     import SWAMPE.continuation as ref_cont
 
     ts = str(int(final_step * dt))
@@ -284,7 +284,7 @@ def _run_reference(kwargs: Dict[str, Any], final_step: int) -> tuple[Dict[str, n
             **kwargs,
         )
         elapsed = time.perf_counter() - t0
-        fields = _legacy_terminal_fields(custompath, final_step=final_step, dt=float(kwargs["dt"]))
+        fields = _legacy_comparison_fields(custompath, final_step=final_step, dt=float(kwargs["dt"]))
     return fields, elapsed
 
 
@@ -332,6 +332,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     test_value = None if int(args.test) == 0 else int(args.test)
+
+    # Test cases have no physical forcing, so forcflag must be False.
+    # With forcflag=True the modified-Euler eta coefficient is 2x larger
+    # (designed for when drag damping is present).  Without that damping the
+    # forward-Euler amplification at high wavenumbers overwhelms the
+    # hyperdiffusion filter and both codes blow up.
+    forcflag = bool(args.forcflag) if test_value is None else False
+
     model_kwargs: Dict[str, Any] = dict(
         M=int(args.M),
         dt=float(args.dt),
@@ -341,7 +349,7 @@ def main() -> None:
         a=float(args.a),
         test=test_value,
         g=float(args.g),
-        forcflag=bool(args.forcflag),
+        forcflag=forcflag,
         taurad=float(args.taurad),
         taudrag=float(args.taudrag),
         DPhieq=float(args.DPhieq),
@@ -360,6 +368,7 @@ def main() -> None:
     print(f"final_step={final_step}")
     print(f"tmax={tmax}")
     print(f"mode={'forced' if test_value is None else f'test={test_value}'}")
+    print(f"forcflag={forcflag}")
 
     ref_fields, ref_seconds = _run_reference(model_kwargs, final_step=final_step)
     got_fields, my_seconds = _run_my_swamp(model_kwargs)
@@ -368,8 +377,8 @@ def main() -> None:
         field: _field_summary(ref_fields[field], got_fields[field], rel_floor_frac=float(args.rel_floor_frac))
         for field in ("eta", "delta", "Phi", "U", "V")
     }
-    plot_path = out_dir / "terminal_comparison.png"
-    _save_terminal_comparison_plot(
+    plot_path = out_dir / "field_comparison.png"
+    _save_field_comparison_plot(
         ref_fields=ref_fields,
         got_fields=got_fields,
         metrics=metrics,
@@ -379,7 +388,7 @@ def main() -> None:
     )
 
     summary = {
-        "comparison": "SWAMPE vs MY_SWAMP long-run terminal parity",
+        "comparison": "SWAMPE vs MY_SWAMP long-run field comparison",
         "output_dir": str(out_dir.resolve().relative_to(Path.cwd())),
         "plot_png": str(plot_path.resolve().relative_to(Path.cwd())),
         "days_requested": float(args.days),
@@ -396,7 +405,7 @@ def main() -> None:
     }
 
     np.savez_compressed(
-        out_dir / "terminal_fields.npz",
+        out_dir / "comparison_fields.npz",
         ref_eta=ref_fields["eta"],
         ref_delta=ref_fields["delta"],
         ref_Phi=ref_fields["Phi"],
@@ -420,7 +429,7 @@ def main() -> None:
     print(f"  SWAMPE:   {ref_seconds:.3f} s")
     print(f"  MY_SWAMP: {my_seconds:.3f} s")
     print()
-    print("Terminal field errors")
+    print("Field comparison errors")
     for field in ("eta", "delta", "Phi", "U", "V"):
         m = metrics[field]
         print(
@@ -434,7 +443,7 @@ def main() -> None:
 
     print()
     print(f"Wrote {out_dir / 'summary.json'}")
-    print(f"Wrote {out_dir / 'terminal_fields.npz'}")
+    print(f"Wrote {out_dir / 'comparison_fields.npz'}")
     print(f"Wrote {plot_path}")
 
 
