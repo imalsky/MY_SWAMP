@@ -119,6 +119,11 @@ reports/
 unit_tests/_compare_outputs/
 
 # === Assistant / LLM docs ===
+.claude/
+.cursor/
+.copilot/
+.gemini/
+.qwen/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
