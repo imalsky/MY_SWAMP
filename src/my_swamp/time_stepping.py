@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from .branching import cond
-from .dtypes import float_dtype
+from .dtypes import Scalar, float_dtype
 
 from . import explicit_tdiff as exp_tdiff
 from . import modEuler_tdiff as mod_tdiff
@@ -11,49 +11,49 @@ from . import spectral_transform as st
 
 
 def tstepping(
-    etam0,
-    etam1,
-    deltam0,
-    deltam1,
-    Phim0,
-    Phim1,
-    I,
-    J,
-    M,
-    N,
-    Am,
-    Bm,
-    Cm,
-    Dm,
-    Em,
-    Fm,
-    Gm,
-    Um,
-    Vm,
-    fmn,
-    Pmn,
-    Hmn,
-    Pmnw,
-    Hmnw,
-    tstepcoeff,
-    tstepcoeff2,
-    tstepcoeffmn,
-    marray,
-    mJarray,
-    narray,
-    PhiFm,
-    dt,
-    a,
-    Phibar,
-    taurad,
-    taudrag,
-    forcflag,
-    diffflag,
-    expflag,
-    sigma,
-    sigmaPhi,
-    test,
-    t,
+    etam0: jnp.ndarray,
+    etam1: jnp.ndarray,
+    deltam0: jnp.ndarray,
+    deltam1: jnp.ndarray,
+    Phim0: jnp.ndarray,
+    Phim1: jnp.ndarray,
+    I: int,
+    J: int,
+    M: int,
+    N: int,
+    Am: jnp.ndarray,
+    Bm: jnp.ndarray,
+    Cm: jnp.ndarray,
+    Dm: jnp.ndarray,
+    Em: jnp.ndarray,
+    Fm: jnp.ndarray,
+    Gm: jnp.ndarray,
+    Um: jnp.ndarray,
+    Vm: jnp.ndarray,
+    fmn: jnp.ndarray,
+    Pmn: jnp.ndarray,
+    Hmn: jnp.ndarray,
+    Pmnw: jnp.ndarray,
+    Hmnw: jnp.ndarray,
+    tstepcoeff: jnp.ndarray,
+    tstepcoeff2: jnp.ndarray,
+    tstepcoeffmn: jnp.ndarray,
+    marray: jnp.ndarray,
+    mJarray: jnp.ndarray,
+    narray: jnp.ndarray,
+    PhiFm: jnp.ndarray,
+    dt: Scalar,
+    a: Scalar,
+    Phibar: Scalar,
+    taurad: Scalar,
+    taudrag: Scalar,
+    forcflag: bool,
+    diffflag: bool,
+    expflag: bool,
+    sigma: jnp.ndarray,
+    sigmaPhi: jnp.ndarray,
+    test: int,
+    t: jnp.ndarray,
 ):
     """Top-level time stepping wrapper.
 
@@ -67,49 +67,49 @@ def tstepping(
 
     Parameters
     ----------
-    etam0 : Any
-    etam1 : Any
-    deltam0 : Any
-    deltam1 : Any
-    Phim0 : Any
-    Phim1 : Any
-    I : Any
-    J : Any
-    M : Any
-    N : Any
-    Am : Any
-    Bm : Any
-    Cm : Any
-    Dm : Any
-    Em : Any
-    Fm : Any
-    Gm : Any
-    Um : Any
-    Vm : Any
-    fmn : Any
-    Pmn : Any
-    Hmn : Any
-    Pmnw : Any
-    Hmnw : Any
-    tstepcoeff : Any
-    tstepcoeff2 : Any
-    tstepcoeffmn : Any
-    marray : Any
-    mJarray : Any
-    narray : Any
-    PhiFm : Any
-    dt : Any
-    a : Any
-    Phibar : Any
-    taurad : Any
-    taudrag : Any
-    forcflag : Any
-    diffflag : Any
-    expflag : Any
-    sigma : Any
-    sigmaPhi : Any
-    test : Any
-    t : Any
+    etam0 : jnp.ndarray
+    etam1 : jnp.ndarray
+    deltam0 : jnp.ndarray
+    deltam1 : jnp.ndarray
+    Phim0 : jnp.ndarray
+    Phim1 : jnp.ndarray
+    I : int
+    J : int
+    M : int
+    N : int
+    Am : jnp.ndarray
+    Bm : jnp.ndarray
+    Cm : jnp.ndarray
+    Dm : jnp.ndarray
+    Em : jnp.ndarray
+    Fm : jnp.ndarray
+    Gm : jnp.ndarray
+    Um : jnp.ndarray
+    Vm : jnp.ndarray
+    fmn : jnp.ndarray
+    Pmn : jnp.ndarray
+    Hmn : jnp.ndarray
+    Pmnw : jnp.ndarray
+    Hmnw : jnp.ndarray
+    tstepcoeff : jnp.ndarray
+    tstepcoeff2 : jnp.ndarray
+    tstepcoeffmn : jnp.ndarray
+    marray : jnp.ndarray
+    mJarray : jnp.ndarray
+    narray : jnp.ndarray
+    PhiFm : jnp.ndarray
+    dt : Scalar
+    a : Scalar
+    Phibar : Scalar
+    taurad : Scalar
+    taudrag : Scalar
+    forcflag : bool
+    diffflag : bool
+    expflag : bool
+    sigma : jnp.ndarray
+    sigmaPhi : jnp.ndarray
+    test : int
+    t : jnp.ndarray
 
     Returns
     -------
@@ -387,7 +387,7 @@ def tstepping(
     return cond(expflag, do_explicit, do_modeuler, operand=None)
 
 
-def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
+def tstepcoeffmn(M: int, N: int, a: Scalar) -> jnp.ndarray:
     """Spectral coefficient array ``a / [n(n+1)]`` for wind inversion.
 
     Shape ``(M+1, N+1)``.  The n=0 row is zeroed out.
@@ -400,7 +400,7 @@ def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
     return jnp.broadcast_to(tstep[None, :], (M + 1, N + 1))
 
 
-def tstepcoeff2(J: int, M: int, dt: float, a: float) -> jnp.ndarray:
+def tstepcoeff2(J: int, M: int, dt: Scalar, a: Scalar) -> jnp.ndarray:
     """Uniform coefficient array ``2*dt / a**2`` with shape ``(J, M+1)``."""
     return jnp.full((J, M + 1), 2.0 * dt / (a**2), dtype=float_dtype())
 
@@ -412,7 +412,7 @@ def narray(M: int, N: int) -> jnp.ndarray:
     return jnp.broadcast_to(nnp1[None, :], (M + 1, N + 1))
 
 
-def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.ndarray:
+def tstepcoeff(J: int, M: int, dt: Scalar, mus: jnp.ndarray, a: Scalar) -> jnp.ndarray:
     """Latitude-dependent coefficient ``2*dt / [a*(1-mu^2)]`` with shape ``(J, M+1)``."""
     mu = mus[:, None]
     # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1), so
@@ -433,7 +433,7 @@ def marray(M: int, N: int) -> jnp.ndarray:
     return jnp.broadcast_to(m, (M + 1, N + 1))
 
 
-def RMS_winds(a: float, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, U: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:
+def RMS_winds(a: Scalar, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, U: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:
     """Area-weighted RMS wind speed (scalar), matching the reference SWAMPE discretization.
 
     Formula (vectorized)::

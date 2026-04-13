@@ -6,24 +6,27 @@ Matches the original SWAMPE numpy implementation exactly.
 from __future__ import annotations
 
 import jax.numpy as jnp
+from typing import Tuple
+
+from .dtypes import Scalar
 
 
 def Phieqfun(
-    Phibar: float,
-    DPhieq: float,
+    Phibar: Scalar,
+    DPhieq: Scalar,
     lambdas: jnp.ndarray,
     mus: jnp.ndarray,
     I: int,
     J: int,
-    g: float
+    g: Scalar,
 ) -> jnp.ndarray:
     """Evaluates the equilibrium geopotential from Perez-Becker and Showman (2013).
 
     Parameters
     ----------
-    Phibar : float
+    Phibar : Scalar
         Reference (mean) geopotential in SI units.
-    DPhieq : float
+    DPhieq : Scalar
         Day-night equilibrium geopotential contrast.
     lambdas : jnp.ndarray
         Longitudes in radians with shape ``(I,)``.
@@ -62,8 +65,8 @@ def Phieqfun(
 def Qfun(
     Phieq: jnp.ndarray,
     Phi: jnp.ndarray,
-    Phibar: float,
-    taurad: float
+    Phibar: Scalar,
+    taurad: Scalar,
 ) -> jnp.ndarray:
     """Evaluates the radiative forcing on the geopotential.
 
@@ -95,9 +98,9 @@ def Rfun(
     V: jnp.ndarray,
     Q: jnp.ndarray,
     Phi: jnp.ndarray,
-    Phibar: float,
-    taudrag: float
-):
+    Phibar: Scalar,
+    taudrag: Scalar,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Evaluates the velocity forcing from Perez-Becker and Showman (2013).
 
     Negative Q values are clamped to zero (mass-loss prevention).  When

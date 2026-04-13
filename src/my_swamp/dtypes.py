@@ -31,7 +31,7 @@ import ordering in interactive sessions.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Union
 
 try:
     import jax
@@ -49,6 +49,9 @@ try:
         """Return ``jnp.complex128`` when x64 is enabled, else ``jnp.complex64``."""
         return jnp.complex128 if x64_enabled() else jnp.complex64
 
+    #: A scalar that may be a Python float or a JAX array/tracer (for autodiff).
+    Scalar = Union[float, jax.Array]
+
 except Exception:  # pragma: no cover
     # Allow import in environments where JAX isn't installed (docs, packaging).
     import numpy as np
@@ -64,3 +67,5 @@ except Exception:  # pragma: no cover
     def complex_dtype() -> Any:
         """Return ``np.complex128`` (fallback when JAX is unavailable)."""
         return np.complex128
+
+    Scalar = Union[float, Any]

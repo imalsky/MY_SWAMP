@@ -2,7 +2,7 @@
 
 Compatibility wrapper for the original SWAMPE `main_function.py`.
 
-Design goals
+Goals, as a JAX rewrite of SWAMPE
 ------------
 1) Preserve the *call signature* (positional args, keyword names, and defaults)
    from the original numpy SWAMPE `main_function.main(...)` so existing driver

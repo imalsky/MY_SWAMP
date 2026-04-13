@@ -2,7 +2,12 @@
 """
 This module contains functions related to generating figures and gifs with SWAMPE.
 """
+from __future__ import annotations
+
+from typing import Any, List, Optional
+
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import matplotlib.ticker as ticker
@@ -10,18 +15,8 @@ import os
 import imageio
 
 
-
-def _to_numpy(x):
-    """Return to numpy.
-    
-    Parameters
-    ----------
-    x : Any
-    
-    Returns
-    -------
-    Any
-    """
+def _to_numpy(x: Any) -> np.ndarray:
+    """Convert JAX or array-like input to a NumPy array."""
     # Accept NumPy arrays, JAX arrays, or array-likes.
     try:
         import jax.numpy as jnp  # type: ignore
@@ -32,7 +27,18 @@ def _to_numpy(x):
     return np.asarray(x)
 
 
-def mean_zonal_wind_plot(plotdata,mus,timestamp,units='hours',customtitle=None,customxlabel=None,savemyfig=False,filename=None,custompath=None,color=None):
+def mean_zonal_wind_plot(
+    plotdata: np.ndarray,
+    mus: np.ndarray,
+    timestamp: float,
+    units: str = 'hours',
+    customtitle: Optional[str] = None,
+    customxlabel: Optional[str] = None,
+    savemyfig: bool = False,
+    filename: Optional[str] = None,
+    custompath: Optional[str] = None,
+    color: Optional[str] = None,
+) -> matplotlib.figure.Figure:
     """Generates a plot of mean zonal winds (averaged across all longitudes). 
     
     :param plotdata: Wind data, ususally U, of size (J,I).
@@ -100,7 +106,7 @@ def mean_zonal_wind_plot(plotdata,mus,timestamp,units='hours',customtitle=None,c
     return plt.gcf()
 
 # Formatter used by the geopotential colorbar and axis labels.
-def fmt(x, pos):
+def fmt(x: float, pos: Any) -> str:
     """Generates the format for scientific notation in axis and colorbar labels.
     
     Parameters
@@ -119,7 +125,24 @@ def fmt(x, pos):
     b = int(b)
     return r'${} \times 10^{{{}}}$'.format(a, b)
 
-def quiver_geopot_plot(U,V,Phi,lambdas,mus,timestamp,sparseness=4,minlevel=None,maxlevel=None,units='hours',customtitle=None,savemyfig=False,filename=None,custompath=None,axlabels=False,colormap=None):
+def quiver_geopot_plot(
+    U: np.ndarray,
+    V: np.ndarray,
+    Phi: np.ndarray,
+    lambdas: np.ndarray,
+    mus: np.ndarray,
+    timestamp: float,
+    sparseness: int = 4,
+    minlevel: Optional[float] = None,
+    maxlevel: Optional[float] = None,
+    units: str = 'hours',
+    customtitle: Optional[str] = None,
+    savemyfig: bool = False,
+    filename: Optional[str] = None,
+    custompath: Optional[str] = None,
+    axlabels: bool = False,
+    colormap: Any = None,
+) -> matplotlib.figure.Figure:
     """Generates a quiver plot with the geopotential field and overlayed wind vectors.
     
     :param U: lat-lon zonal wind component, (J,I)
@@ -211,7 +234,20 @@ def quiver_geopot_plot(U,V,Phi,lambdas,mus,timestamp,sparseness=4,minlevel=None,
     return fig
     
 
-def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,customylabel=None,savemyfig=False,filename=None,custompath=None,color=None,legendflag=True,customlegend=None):
+def spinup_plot(
+    plotdata: np.ndarray,
+    dt: float,
+    units: str = 'hours',
+    customtitle: Optional[str] = None,
+    customxlabel: Optional[str] = None,
+    customylabel: Optional[str] = None,
+    savemyfig: bool = False,
+    filename: Optional[str] = None,
+    custompath: Optional[str] = None,
+    color: Optional[List[str]] = None,
+    legendflag: bool = True,
+    customlegend: Optional[List[str]] = None,
+) -> matplotlib.figure.Figure:
     """Generates a plot of RMS winds and minimal winds over time. Can be useful for monitoring spinup.
     
     :param plotdata: Spinup winds, of size (2,tmax).
@@ -300,7 +336,7 @@ def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,cus
 
 
 
-def gif_helper(fig,dpi=200):
+def gif_helper(fig: matplotlib.figure.Figure, dpi: int = 200) -> np.ndarray:
     """Converts the figure to image format for gif generation.
     
     :param fig: figure
@@ -317,7 +353,25 @@ def gif_helper(fig,dpi=200):
 
     return image
 
-def write_quiver_gif(lambdas,mus,Phidata,Udata,Vdata,timestamps,filename,frms=5,sparseness=4,dpi=200,minlevel=None,maxlevel=None,units='hours',customtitle=None,custompath=None,axlabels=False,colormap=None):
+def write_quiver_gif(
+    lambdas: np.ndarray,
+    mus: np.ndarray,
+    Phidata: np.ndarray,
+    Udata: np.ndarray,
+    Vdata: np.ndarray,
+    timestamps: np.ndarray,
+    filename: str,
+    frms: int = 5,
+    sparseness: int = 4,
+    dpi: int = 200,
+    minlevel: Optional[float] = None,
+    maxlevel: Optional[float] = None,
+    units: str = 'hours',
+    customtitle: Optional[str] = None,
+    custompath: Optional[str] = None,
+    axlabels: bool = False,
+    colormap: Any = None,
+) -> None:
     """Writes a gif generated from a series of geopotential quiver plots.
     
     :param lambdas: Uniformly spaced longitudes of length I.

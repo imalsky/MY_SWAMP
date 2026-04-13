@@ -13,98 +13,52 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from .branching import maybe_apply
+from .dtypes import Scalar
 from . import filters
 from . import spectral_transform as st
 
 def phi_timestep(
-    etam0,
-    etam1,
-    deltam0,
-    deltam1,
-    Phim0,
-    Phim1,
-    I,
-    J,
-    M,
-    N,
-    Am,
-    Bm,
-    Cm,
-    Dm,
-    Em,
-    Fm,
-    Gm,
-    Um,
-    Vm,
-    Pmn,
-    Hmn,
-    Pmnw,
-    Hmnw,
-    tstepcoeff1,
-    tstepcoeff2,
-    mJarray,
-    narray,
-    PhiFm,
-    dt,
-    a,
-    Phibar,
-    taurad,
-    taudrag,
-    forcflag,
-    diffflag,
-    sigma,
-    sigmaPhi,
-    test,
-    t,
-):
-    """Explicit update for geopotential Phi (reference SWAMPE parity).
-    
-    Parameters
-    ----------
-    etam0 : Any
-    etam1 : Any
-    deltam0 : Any
-    deltam1 : Any
-    Phim0 : Any
-    Phim1 : Any
-    I : Any
-    J : Any
-    M : Any
-    N : Any
-    Am : Any
-    Bm : Any
-    Cm : Any
-    Dm : Any
-    Em : Any
-    Fm : Any
-    Gm : Any
-    Um : Any
-    Vm : Any
-    Pmn : Any
-    Hmn : Any
-    Pmnw : Any
-    Hmnw : Any
-    tstepcoeff1 : Any
-    tstepcoeff2 : Any
-    mJarray : Any
-    narray : Any
-    PhiFm : Any
-    dt : Any
-    a : Any
-    Phibar : Any
-    taurad : Any
-    taudrag : Any
-    forcflag : Any
-    diffflag : Any
-    sigma : Any
-    sigmaPhi : Any
-    test : Any
-    t : Any
-    
-    Returns
-    -------
-    Any
-    """
+    etam0: jnp.ndarray,
+    etam1: jnp.ndarray,
+    deltam0: jnp.ndarray,
+    deltam1: jnp.ndarray,
+    Phim0: jnp.ndarray,
+    Phim1: jnp.ndarray,
+    I: int,
+    J: int,
+    M: int,
+    N: int,
+    Am: jnp.ndarray,
+    Bm: jnp.ndarray,
+    Cm: jnp.ndarray,
+    Dm: jnp.ndarray,
+    Em: jnp.ndarray,
+    Fm: jnp.ndarray,
+    Gm: jnp.ndarray,
+    Um: jnp.ndarray,
+    Vm: jnp.ndarray,
+    Pmn: jnp.ndarray,
+    Hmn: jnp.ndarray,
+    Pmnw: jnp.ndarray,
+    Hmnw: jnp.ndarray,
+    tstepcoeff1: jnp.ndarray,
+    tstepcoeff2: jnp.ndarray,
+    mJarray: jnp.ndarray,
+    narray: jnp.ndarray,
+    PhiFm: jnp.ndarray,
+    dt: Scalar,
+    a: Scalar,
+    Phibar: Scalar,
+    taurad: Scalar,
+    taudrag: Scalar,
+    forcflag: bool,
+    diffflag: bool,
+    sigma: jnp.ndarray,
+    sigmaPhi: jnp.ndarray,
+    test: int,
+    t: jnp.ndarray,
+) -> tuple:
+    """Explicit update for geopotential Phi (reference SWAMPE parity)."""
 
     # Components 1/2/4 share Pmn basis; evaluate them in one batched contraction.
     Phicomp2prep = tstepcoeff1 * (1j) * mJarray * Cm
@@ -142,96 +96,50 @@ def phi_timestep(
 
 
 def delta_timestep(
-    etam0,
-    etam1,
-    deltam0,
-    deltam1,
-    Phim0,
-    Phim1,
-    I,
-    J,
-    M,
-    N,
-    Am,
-    Bm,
-    Cm,
-    Dm,
-    Em,
-    Fm,
-    Gm,
-    Um,
-    Vm,
-    Pmn,
-    Hmn,
-    Pmnw,
-    Hmnw,
-    tstepcoeff1,
-    tstepcoeff2,
-    mJarray,
-    narray,
-    PhiFm,
-    dt,
-    a,
-    Phibar,
-    taurad,
-    taudrag,
-    forcflag,
-    diffflag,
-    sigma,
-    sigmaPhi,
-    test,
-    t,
-):
+    etam0: jnp.ndarray,
+    etam1: jnp.ndarray,
+    deltam0: jnp.ndarray,
+    deltam1: jnp.ndarray,
+    Phim0: jnp.ndarray,
+    Phim1: jnp.ndarray,
+    I: int,
+    J: int,
+    M: int,
+    N: int,
+    Am: jnp.ndarray,
+    Bm: jnp.ndarray,
+    Cm: jnp.ndarray,
+    Dm: jnp.ndarray,
+    Em: jnp.ndarray,
+    Fm: jnp.ndarray,
+    Gm: jnp.ndarray,
+    Um: jnp.ndarray,
+    Vm: jnp.ndarray,
+    Pmn: jnp.ndarray,
+    Hmn: jnp.ndarray,
+    Pmnw: jnp.ndarray,
+    Hmnw: jnp.ndarray,
+    tstepcoeff1: jnp.ndarray,
+    tstepcoeff2: jnp.ndarray,
+    mJarray: jnp.ndarray,
+    narray: jnp.ndarray,
+    PhiFm: jnp.ndarray,
+    dt: Scalar,
+    a: Scalar,
+    Phibar: Scalar,
+    taurad: Scalar,
+    taudrag: Scalar,
+    forcflag: bool,
+    diffflag: bool,
+    sigma: jnp.ndarray,
+    sigmaPhi: jnp.ndarray,
+    test: int,
+    t: jnp.ndarray,
+) -> tuple:
     """Explicit update for divergence delta (reference SWAMPE parity).
-    
+
     Note: Reference SWAMPE explicit behavior updates delta with carry-over only.
     The dropped tendency components are intentionally omitted here.
-    
-    Parameters
-    ----------
-    etam0 : Any
-    etam1 : Any
-    deltam0 : Any
-    deltam1 : Any
-    Phim0 : Any
-    Phim1 : Any
-    I : Any
-    J : Any
-    M : Any
-    N : Any
-    Am : Any
-    Bm : Any
-    Cm : Any
-    Dm : Any
-    Em : Any
-    Fm : Any
-    Gm : Any
-    Um : Any
-    Vm : Any
-    Pmn : Any
-    Hmn : Any
-    Pmnw : Any
-    Hmnw : Any
-    tstepcoeff1 : Any
-    tstepcoeff2 : Any
-    mJarray : Any
-    narray : Any
-    PhiFm : Any
-    dt : Any
-    a : Any
-    Phibar : Any
-    taurad : Any
-    taudrag : Any
-    forcflag : Any
-    diffflag : Any
-    sigma : Any
-    sigmaPhi : Any
-    test : Any
-    t : Any
-    
-    Returns
-    -------
-    Any
     """
 
     # Component 1 (carry-over)
@@ -275,94 +183,47 @@ def delta_timestep(
 
 
 def eta_timestep(
-    etam0,
-    etam1,
-    deltam0,
-    deltam1,
-    Phim0,
-    Phim1,
-    I,
-    J,
-    M,
-    N,
-    Am,
-    Bm,
-    Cm,
-    Dm,
-    Em,
-    Fm,
-    Gm,
-    Um,
-    Vm,
-    Pmn,
-    Hmn,
-    Pmnw,
-    Hmnw,
-    tstepcoeff1,
-    tstepcoeff2,
-    mJarray,
-    narray,
-    PhiFm,
-    dt,
-    a,
-    Phibar,
-    taurad,
-    taudrag,
-    forcflag,
-    diffflag,
-    sigma,
-    sigmaPhi,
-    test,
-    t,
-):
-    """Explicit update for absolute vorticity eta (reference SWAMPE parity).
-    
-    Parameters
-    ----------
-    etam0 : Any
-    etam1 : Any
-    deltam0 : Any
-    deltam1 : Any
-    Phim0 : Any
-    Phim1 : Any
-    I : Any
-    J : Any
-    M : Any
-    N : Any
-    Am : Any
-    Bm : Any
-    Cm : Any
-    Dm : Any
-    Em : Any
-    Fm : Any
-    Gm : Any
-    Um : Any
-    Vm : Any
-    Pmn : Any
-    Hmn : Any
-    Pmnw : Any
-    Hmnw : Any
-    tstepcoeff1 : Any
-    tstepcoeff2 : Any
-    mJarray : Any
-    narray : Any
-    PhiFm : Any
-    dt : Any
-    a : Any
-    Phibar : Any
-    taurad : Any
-    taudrag : Any
-    forcflag : Any
-    diffflag : Any
-    sigma : Any
-    sigmaPhi : Any
-    test : Any
-    t : Any
-    
-    Returns
-    -------
-    Any
-    """
+    etam0: jnp.ndarray,
+    etam1: jnp.ndarray,
+    deltam0: jnp.ndarray,
+    deltam1: jnp.ndarray,
+    Phim0: jnp.ndarray,
+    Phim1: jnp.ndarray,
+    I: int,
+    J: int,
+    M: int,
+    N: int,
+    Am: jnp.ndarray,
+    Bm: jnp.ndarray,
+    Cm: jnp.ndarray,
+    Dm: jnp.ndarray,
+    Em: jnp.ndarray,
+    Fm: jnp.ndarray,
+    Gm: jnp.ndarray,
+    Um: jnp.ndarray,
+    Vm: jnp.ndarray,
+    Pmn: jnp.ndarray,
+    Hmn: jnp.ndarray,
+    Pmnw: jnp.ndarray,
+    Hmnw: jnp.ndarray,
+    tstepcoeff1: jnp.ndarray,
+    tstepcoeff2: jnp.ndarray,
+    mJarray: jnp.ndarray,
+    narray: jnp.ndarray,
+    PhiFm: jnp.ndarray,
+    dt: Scalar,
+    a: Scalar,
+    Phibar: Scalar,
+    taurad: Scalar,
+    taudrag: Scalar,
+    forcflag: bool,
+    diffflag: bool,
+    sigma: jnp.ndarray,
+    sigmaPhi: jnp.ndarray,
+    test: int,
+    t: jnp.ndarray,
+) -> tuple:
+    """Explicit update for absolute vorticity eta (reference SWAMPE parity)."""
 
     etacomp2prep = tstepcoeff1 * (1j) * mJarray * Am
     etacomp3prep = tstepcoeff1 * Bm

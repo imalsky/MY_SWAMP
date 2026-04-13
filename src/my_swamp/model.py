@@ -33,7 +33,7 @@ from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
-from .dtypes import float_dtype
+from .dtypes import Scalar, float_dtype
 import numpy as np
 
 from .branching import cond
@@ -187,8 +187,8 @@ class RunFlags:
     expflag: bool = False
     modalflag: bool = True
     diagnostics: bool = True
-    alpha: Any = 0.01
-    blowup_rms: Any = 8000.0
+    alpha: Scalar = 0.01
+    blowup_rms: Scalar = 8000.0
 
 
     def tree_flatten(self):
@@ -449,33 +449,33 @@ def _dedupe_state_for_donation(state: State) -> State:
 def build_static(
     *,
     M: int,
-    dt: Any,
-    a: Any,
-    omega: Any,
-    g: Any,
-    Phibar: Any,
-    taurad: Any,
-    taudrag: Any,
-    DPhieq: Any,
-    K6: Any,
-    K6Phi: Optional[Any],
+    dt: Scalar,
+    a: Scalar,
+    omega: Scalar,
+    g: Scalar,
+    Phibar: Scalar,
+    taurad: Scalar,
+    taudrag: Scalar,
+    DPhieq: Scalar,
+    K6: Scalar,
+    K6Phi: Optional[Scalar],
     test: Optional[int],
 ) -> Static:
     """Build time-invariant arrays (quadrature, basis, diffusion, coefficients).
-    
+
     Parameters
     ----------
     M : int
-    dt : Any
-    a : Any
-    omega : Any
-    g : Any
-    Phibar : Any
-    taurad : Any
-    taudrag : Any
-    DPhieq : Any
-    K6 : Any
-    K6Phi : Optional[Any]
+    dt : Scalar
+    a : Scalar
+    omega : Scalar
+    g : Scalar
+    Phibar : Scalar
+    taurad : Scalar
+    taudrag : Scalar
+    DPhieq : Scalar
+    K6 : Scalar
+    K6Phi : Optional[Scalar]
     test : Optional[int]
     
     Returns
@@ -617,6 +617,56 @@ def _nonlinear_spectral(
     )
     Am, Bm, Cm, Dm, Em = st.fwd_fft_trunc_batch(jnp.stack((A, B, C, D, E), axis=0), static.I, static.M)
     return Am, Bm, Cm, Dm, Em
+
+
+def _diagnose_winds(eta: jnp.ndarray, delta: jnp.ndarray, static: Static) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Diagnose U, V winds from eta and delta via spectral transforms.
+
+    Performs forward FFT + Legendre transform on eta/delta, then inverts the
+    wind relation to obtain physical-space U and V.
+    """
+    etam, deltam = st.fwd_fft_trunc_batch(jnp.stack((eta, delta), axis=0), static.I, static.M)
+    etamn = st.fwd_leg(etam, static.J, static.M, static.N, static.Pmn, static.w)
+    deltamn = st.fwd_leg(deltam, static.J, static.M, static.N, static.Pmn, static.w)
+    Uc, Vc = st.invrsUV(
+        deltamn,
+        etamn,
+        static.fmn,
+        static.I,
+        static.J,
+        static.M,
+        static.N,
+        static.Pmn,
+        static.Hmn,
+        static.tstepcoeffmn,
+        static.marray,
+    )
+    return jnp.real(Uc), jnp.real(Vc)
+
+
+def _analytic_ic(
+    static: Static, test: Optional[int], a1: Any,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute analytic initial conditions (eta0, delta0, Phi0, U0, V0).
+
+    Dispatches to test-case-specific initializers from :mod:`initial_conditions`.
+    """
+    SU0, sina, cosa, etaamp, Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
+
+    if test in (1, 2):
+        eta0, _, delta0, _, Phi0, _ = initial_conditions.state_var_init(
+            static.I, static.J, static.mus, static.lambdas, test, etaamp,
+            static.a, sina, cosa, static.Phibar, Phiamp,
+        )
+    else:
+        eta0, _, delta0, _, Phi0, _ = initial_conditions.state_var_init(
+            static.I, static.J, static.mus, static.lambdas, test, etaamp,
+        )
+
+    U0, V0 = initial_conditions.velocity_init(
+        static.I, static.J, SU0, cosa, sina, static.mus, static.lambdas, test,
+    )
+    return eta0, delta0, Phi0, U0, V0
 
 
 def _init_state_from_fields(
@@ -1108,24 +1158,24 @@ def simulate_scan_last(
 def run_model_scan(
     *,
     M: int,
-    dt: Any,
+    dt: Scalar,
     tmax: int,
-    Phibar: Any,
-    omega: Any,
-    a: Any,
+    Phibar: Scalar,
+    omega: Scalar,
+    a: Scalar,
     test: Optional[int] = None,
-    g: Any = 9.8,
+    g: Scalar = 9.8,
     forcflag: bool = True,
-    taurad: Any = 86400.0,
-    taudrag: Any = 86400.0,
-    DPhieq: Any = 4 * (10**6),
-    a1: Any = 0.05,
+    taurad: Scalar = 86400.0,
+    taudrag: Scalar = 86400.0,
+    DPhieq: Scalar = 4 * (10**6),
+    a1: Scalar = 0.05,
     diffflag: bool = True,
     modalflag: bool = True,
-    alpha: Any = 0.01,
+    alpha: Scalar = 0.01,
     expflag: bool = False,
-    K6: Any = 1.24 * (10**33),
-    K6Phi: Optional[Any] = None,
+    K6: Scalar = 1.24 * (10**33),
+    K6Phi: Optional[Scalar] = None,
     contflag: bool = False,
     custompath: Optional[str] = None,
     contTime: Optional[str] = None,
@@ -1152,43 +1202,43 @@ def run_model_scan(
     ----------
     M : int
         Spectral truncation with ``N=M``.
-    dt : Any
+    dt : Scalar
         Float-like timestep in seconds. Concrete Python scalars are validated to
         be positive.
     tmax : int
         Final timestep index. The scan advances over ``arange(starttime, tmax)``.
-    Phibar : Any
+    Phibar : Scalar
         Reference geopotential scalar.
-    omega : Any
+    omega : Scalar
         Planetary rotation rate in radians per second.
-    a : Any
+    a : Scalar
         Planetary radius in meters.
     test : Optional[int]
         Idealized test selector or ``None`` for forced mode.
-    g : Any
+    g : Scalar
         Surface gravity scalar.
     forcflag : bool
         Enables thermal forcing.
-    taurad : Any
+    taurad : Scalar
         Radiative relaxation timescale in seconds.
-    taudrag : Any
+    taudrag : Scalar
         Drag timescale in seconds.
-    DPhieq : Any
+    DPhieq : Scalar
         Day-night equilibrium geopotential contrast.
-    a1 : Any
+    a1 : Scalar
         Tilt angle used by the analytic test initial conditions.
     diffflag : bool
         Enables diffusion filtering.
     modalflag : bool
         Enables the modal/Robert-Asselin correction branch.
-    alpha : Any
+    alpha : Scalar
         Robert-Asselin filter coefficient.
     expflag : bool
         Selects the explicit timestepper when true and the modified-Euler
         scheme otherwise.
-    K6 : Any
+    K6 : Scalar
         Sixth-order diffusion coefficient for vorticity and divergence.
-    K6Phi : Optional[Any]
+    K6Phi : Optional[Scalar]
         Optional sixth-order diffusion coefficient for geopotential.
     contflag : bool
         Enables continuation from saved disk state.
@@ -1341,51 +1391,12 @@ def run_model_scan(
                 if arr.shape != expected_shape:
                     raise ValueError(f"{name} must have shape {expected_shape}, got {arr.shape}.")
         else:
-            # Diagnose winds from eta/delta (continuation path).
-            etam0, deltam0 = st.fwd_fft_trunc_batch(jnp.stack((eta0, delta0), axis=0), static.I, static.M)
-            etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
-            deltamn0 = st.fwd_leg(deltam0, static.J, static.M, static.N, static.Pmn, static.w)
-
-            Uc, Vc = st.invrsUV(
-                deltamn0,
-                etamn0,
-                static.fmn,
-                static.I,
-                static.J,
-                static.M,
-                static.N,
-                static.Pmn,
-                static.Hmn,
-                static.tstepcoeffmn,
-                static.marray,
-            )
-            U0 = jnp.real(Uc)
-            V0 = jnp.real(Vc)
+            # Diagnose winds from eta/delta.
+            U0, V0 = _diagnose_winds(eta0, delta0, static)
 
     elif not contflag:
         # Analytic initialization
-        SU0, sina, cosa, etaamp, Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
-
-        if test in (1, 2):
-            eta0, _, delta0, _, Phi0, _ = initial_conditions.state_var_init(
-                static.I,
-                static.J,
-                static.mus,
-                static.lambdas,
-                test,
-                etaamp,
-                static.a,
-                sina,
-                cosa,
-                static.Phibar,
-                Phiamp,
-            )
-        else:
-            eta0, _, delta0, _, Phi0, _ = initial_conditions.state_var_init(
-                static.I, static.J, static.mus, static.lambdas, test, etaamp
-            )
-
-        U0, V0 = initial_conditions.velocity_init(static.I, static.J, SU0, cosa, sina, static.mus, static.lambdas, test)
+        eta0, delta0, Phi0, U0, V0 = _analytic_ic(static, test, a1)
 
     else:
         # Continuation initialization (loads eta/delta/Phi and diagnoses winds).
@@ -1399,7 +1410,7 @@ def run_model_scan(
         cont_fallback = str(contTime)
 
         def _read_with_fallback(prefix: str):
-            """Read read with fallback.
+            """Read with fallback.
             
             Parameters
             ----------
@@ -1420,25 +1431,7 @@ def run_model_scan(
         delta0 = jnp.asarray(_read_with_fallback("delta"), dtype=float_dtype())
         Phi0 = jnp.asarray(_read_with_fallback("Phi"), dtype=float_dtype())
 
-        etam0, deltam0 = st.fwd_fft_trunc_batch(jnp.stack((eta0, delta0), axis=0), static.I, static.M)
-        etamn0 = st.fwd_leg(etam0, static.J, static.M, static.N, static.Pmn, static.w)
-        deltamn0 = st.fwd_leg(deltam0, static.J, static.M, static.N, static.Pmn, static.w)
-
-        Uc, Vc = st.invrsUV(
-            deltamn0,
-            etamn0,
-            static.fmn,
-            static.I,
-            static.J,
-            static.M,
-            static.N,
-            static.Pmn,
-            static.Hmn,
-            static.tstepcoeffmn,
-            static.marray,
-        )
-        U0 = jnp.real(Uc)
-        V0 = jnp.real(Vc)
+        U0, V0 = _diagnose_winds(eta0, delta0, static)
 
     # Constant winds for test==1 override.
     Uic = U0
@@ -1521,24 +1514,24 @@ def run_model_scan(
 def run_model_scan_final(
     *,
     M: int,
-    dt: Any,
+    dt: Scalar,
     tmax: int,
-    Phibar: Any,
-    omega: Any,
-    a: Any,
+    Phibar: Scalar,
+    omega: Scalar,
+    a: Scalar,
     test: Optional[int] = None,
-    g: Any = 9.8,
+    g: Scalar = 9.8,
     forcflag: bool = True,
-    taurad: Any = 86400.0,
-    taudrag: Any = 86400.0,
-    DPhieq: Any = 4 * (10**6),
-    a1: Any = 0.05,
+    taurad: Scalar = 86400.0,
+    taudrag: Scalar = 86400.0,
+    DPhieq: Scalar = 4 * (10**6),
+    a1: Scalar = 0.05,
     diffflag: bool = True,
     modalflag: bool = True,
-    alpha: Any = 0.01,
+    alpha: Scalar = 0.01,
     expflag: bool = False,
-    K6: Any = 1.24 * (10**33),
-    K6Phi: Optional[Any] = None,
+    K6: Scalar = 1.24 * (10**33),
+    K6Phi: Optional[Scalar] = None,
     contflag: bool = False,
     custompath: Optional[str] = None,
     contTime: Optional[str] = None,
@@ -1569,24 +1562,24 @@ def run_model_scan_final(
     Parameters
     ----------
     M : int
-    dt : Any
+    dt : Scalar
     tmax : int
-    Phibar : Any
-    omega : Any
-    a : Any
+    Phibar : Scalar
+    omega : Scalar
+    a : Scalar
     test : Optional[int]
-    g : Any
+    g : Scalar
     forcflag : bool
-    taurad : Any
-    taudrag : Any
-    DPhieq : Any
-    a1 : Any
+    taurad : Scalar
+    taudrag : Scalar
+    DPhieq : Scalar
+    a1 : Scalar
     diffflag : bool
     modalflag : bool
-    alpha : Any
+    alpha : Scalar
     expflag : bool
-    K6 : Any
-    K6Phi : Optional[Any]
+    K6 : Scalar
+    K6Phi : Optional[Scalar]
     contflag : bool
     custompath : Optional[str]
     contTime : Optional[str]
@@ -1815,42 +1808,7 @@ def run_model(
     # Match SWAMPE: when *not* continuing from saved data, populate the
     # initial diagnostics at index 0 from the analytic initial conditions.
     if not contflag:
-        SU0, sina, cosa, etaamp, Phiamp = initial_conditions.test1_init(static.a, static.omega, a1)
-
-        if test in (1, 2):
-            _, _, _, _, Phi0_init_local, _ = initial_conditions.state_var_init(
-                static.I,
-                static.J,
-                static.mus,
-                static.lambdas,
-                test,
-                etaamp,
-                static.a,
-                sina,
-                cosa,
-                static.Phibar,
-                Phiamp,
-            )
-        else:
-            _, _, _, _, Phi0_init_local, _ = initial_conditions.state_var_init(
-                static.I,
-                static.J,
-                static.mus,
-                static.lambdas,
-                test,
-                etaamp,
-            )
-
-        U0_init_local, V0_init_local = initial_conditions.velocity_init(
-            static.I,
-            static.J,
-            SU0,
-            cosa,
-            sina,
-            static.mus,
-            static.lambdas,
-            test,
-        )
+        _, _, Phi0_init_local, U0_init_local, V0_init_local = _analytic_ic(static, test, a1)
 
         wind0 = jnp.sqrt(U0_init_local * U0_init_local + V0_init_local * V0_init_local)
         spin0 = jnp.min(wind0)
