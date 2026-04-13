@@ -74,6 +74,14 @@ from tqdm.auto import tqdm
 
 @dataclass(frozen=True)
 class Config:
+    """Static configuration for the nested-sampling retrieval notebook.
+
+    The fields are strongly typed scalars, booleans, paths, and optional
+    floats that define output behavior, reproducibility, SWAMP solver
+    parameters, retrieval priors, and nested-sampling controls for a single
+    notebook run.
+    """
+
     # -----------------------
     # I/O & reproducibility
     # -----------------------
@@ -471,6 +479,7 @@ def np_float_dtype() -> Any:
 
 
 def tau_hours_to_seconds(x_hours: Any) -> Any:
+    """Convert a timescale from hours to seconds."""
     return 3600.0 * x_hours
 
 
@@ -480,18 +489,20 @@ def orbital_period_days_from_omega(omega_rad_s: Any) -> Any:
 
 
 def compute_n_steps(model_days: float, dt_seconds: float) -> int:
+    """Convert a physical duration into an integer solver step count."""
     n = int(np.round(model_days * 86400.0 / dt_seconds))
     return max(n, 1)
 
 
 def save_npz(path: Path, **arrays: Any) -> None:
+    """Save named arrays into a compressed ``.npz`` archive."""
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **arrays)
 
 
 def call_with_filtered_kwargs(func, kwargs: Dict[str, Any], *, name: Optional[str] = None):
     """Call func(**kwargs), filtering out unexpected kwargs using inspect.signature.
-
+    
     This is critical when supporting multiple my_swamp / jaxoplanet versions whose call
     signatures may differ slightly.
     """
@@ -560,6 +571,7 @@ def _specs_from_config(cfg: Config) -> List[ParamSpec]:
     specs: List[ParamSpec] = []
 
     def add(name: str, label: str, prior_type: str, lo: float, hi: float, truth: float) -> None:
+        """Append a validated parameter specification to the active list."""
         if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
             raise ValueError(f"Invalid prior bounds for {name}: lo={lo}, hi={hi}")
         if prior_type not in {"uniform", "log10_uniform"}:
@@ -732,12 +744,12 @@ def _build_static_from_values(
     g: Any,
 ) -> Any:
     """Build my_swamp static object.
-
+    
     This is called both:
       - once outside JIT (with Python floats) to define grid/projection, and
       - potentially inside JIT (with JAX scalars) if you infer parameters that
         require rebuilding static for internal consistency.
-
+    
     IMPORTANT: We avoid casting inputs to Python floats here, because doing so would
     break JAX tracing if these are tracers.
     """
@@ -810,9 +822,8 @@ t_seq = jnp.arange(cfg.starttime_index, cfg.starttime_index + n_steps, dtype=jnp
 
 
 def init_rest_state(static: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """
-    Rest-like initial conditions consistent with SWAMPE variable conventions.
-
+    """Rest-like initial conditions consistent with SWAMPE variable conventions.
+    
     - Phi in the model is a *perturbation* geopotential, so equilibrium perturbation is Phieq - Phibar.
     - U,V = 0; delta = 0.
     - eta: use solid-body absolute vorticity ~ 2*omega*sin(lat) = 2*omega*mu.
@@ -883,11 +894,12 @@ state0_base, U0_base, V0_base = build_state0(static_base)
 # =============================================================================
 
 def _all_finite(x: jnp.ndarray) -> jnp.ndarray:
+    """Check whether all elements of an array are finite."""
     return jnp.all(jnp.isfinite(x))
 
 def phi_to_temperature(phi: jnp.ndarray) -> jnp.ndarray:
     """Toy Phi -> temperature mapping with finiteness protection.
-
+    
     If phi contains any non-finite values, return all-NaN to mark the forward model invalid.
     """
     dtype = float_dtype()
@@ -896,11 +908,13 @@ def phi_to_temperature(phi: jnp.ndarray) -> jnp.ndarray:
     finite_phi = _all_finite(phi)
 
     def _ok(_: None) -> jnp.ndarray:
+        """Return the success-branch result for the surrounding helper."""
         T = jnp.asarray(cfg.T_ref, dtype=dtype) + phi / jnp.asarray(cfg.phi_to_T_scale, dtype=dtype)
         T = jnp.maximum(T, jnp.asarray(cfg.Tmin_K, dtype=dtype))
         return T
 
     def _bad(_: None) -> jnp.ndarray:
+        """Return the failure-branch result for the surrounding helper."""
         return jnp.full_like(phi, jnp.asarray(jnp.nan, dtype=dtype))
 
     return jax.lax.cond(finite_phi, _ok, _bad, operand=None)
@@ -908,7 +922,7 @@ def phi_to_temperature(phi: jnp.ndarray) -> jnp.ndarray:
 
 def planck_intensity_relative_lambda(T: jnp.ndarray, wavelength_m: float) -> jnp.ndarray:
     """Relative Planck spectral radiance factor B_λ(T) (shape only), guarded.
-
+    
     If T has any non-finite values, return all-NaN (invalid).
     """
     dtype = float_dtype()
@@ -917,6 +931,7 @@ def planck_intensity_relative_lambda(T: jnp.ndarray, wavelength_m: float) -> jnp
     finite_T = _all_finite(T)
 
     def _ok(_: None) -> jnp.ndarray:
+        """Return the success-branch result for the surrounding helper."""
         lam = jnp.asarray(wavelength_m, dtype=dtype)
 
         # Physical constants (exact in SI by definition; cast to dtype)
@@ -935,6 +950,7 @@ def planck_intensity_relative_lambda(T: jnp.ndarray, wavelength_m: float) -> jnp
         return jnp.asarray(1.0, dtype=dtype) / (jnp.expm1(x) + tiny)
 
     def _bad(_: None) -> jnp.ndarray:
+        """Return the failure-branch result for the surrounding helper."""
         return jnp.full_like(T, jnp.asarray(jnp.nan, dtype=dtype))
 
     return jax.lax.cond(finite_T, _ok, _bad, operand=None)
@@ -1005,6 +1021,7 @@ w_sqrt = jnp.sqrt(w_pix)
 
 
 def build_lm_list(ydeg: int) -> List[Tuple[int, int]]:
+    """Build the spherical-harmonic index list used by the projection helpers."""
     return [(ell, m) for ell in range(ydeg + 1) for m in range(-ell, ell + 1)]
 
 
@@ -1016,6 +1033,7 @@ logger.info(f"Building starry design matrix: n_pix={n_pix}, n_coeff={n_coeff} (y
 
 
 def ylm_from_dense(y_dense: jnp.ndarray, lm_list: Sequence[Tuple[int, int]]) -> Ylm:
+    """Convert a dense coefficient array into the flattened harmonic ordering used downstream."""
     data = {lm: y_dense[i] for i, lm in enumerate(lm_list)}
     return Ylm(data)
 
@@ -1032,6 +1050,7 @@ def surface_intensity(surf: Surface, latv: jnp.ndarray, lonv: jnp.ndarray) -> jn
 
 
 def _intensity_from_yvec(y_vec: jnp.ndarray) -> jnp.ndarray:
+    """Compute intensity from yvec."""
     ylm = ylm_from_dense(y_vec, lm_list)
     surf = Surface(
         y=ylm,
@@ -1078,12 +1097,17 @@ logger.info(f"Projector built in {time.time() - t0_proj:.2f} s")
 def intensity_map_to_y_dense_and_monopole(I_map: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Convert SWAMP intensity map -> starry coefficients and return map monopole proxy.
 
+    Parameters
+    ----------
+    I_map : jnp.ndarray
+        Intensity map with the SWAMP latitude-longitude grid shape ``(J, I)``.
+
     Returns
     -------
-    y_shape : jnp.ndarray
-        Dense Ylm coefficients normalized by y0 (shape information only).
-    y0_raw : jnp.ndarray
-        Raw monopole coefficient before shape normalization (amplitude carrier).
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple ``(y_shape, y0_raw)`` where ``y_shape`` contains normalized dense
+        spherical-harmonic coefficients and ``y0_raw`` is the raw monopole
+        coefficient that carries the overall amplitude.
     """
     dtype = float_dtype()
     I_flat = jnp.asarray(I_map, dtype=dtype).reshape(-1)
@@ -1098,9 +1122,11 @@ def intensity_map_to_y_dense_and_monopole(I_map: jnp.ndarray) -> Tuple[jnp.ndarr
         w_sum = jnp.sum(w_eff)
 
         def _mean_ok(_: None) -> jnp.ndarray:
+            """Return the weighted mean for a valid masked region."""
             return jnp.sum(w_eff * I_safe) / w_sum
 
         def _mean_bad(_: None) -> jnp.ndarray:
+            """Return NaN when the masked mean is undefined."""
             return jnp.asarray(jnp.nan, dtype=dtype)
 
         I_mean = jax.lax.cond(w_sum > jnp.asarray(0.0, dtype=dtype), _mean_ok, _mean_bad, operand=None)
@@ -1188,7 +1214,7 @@ def swamp_terminal_phi(
     g: jnp.ndarray,
 ) -> jnp.ndarray:
     """Run SWAMP for cfg.model_days and return terminal Phi map (J,I).
-
+    
     Two modes:
       - Fast path: only taurad/taudrag vary; reuse static_base and state0_base.
       - General path: rebuild static + state0 each call for internal consistency.
@@ -1232,6 +1258,7 @@ def swamp_terminal_phi(
         state0, U0, V0 = build_state0(static)
 
     def _run_terminal_for_tseq(state_init: Any, t_seq_local: jnp.ndarray) -> Any:
+        """Run the SWAMPE solver over a supplied timestep sequence and return the terminal state."""
         # Prefer a terminal-only scan if available.
         sim_last = getattr(swamp_model, "simulate_scan_last", None) or getattr(swamp_model, "run_model_scan_final", None)
         if sim_last is not None:
@@ -1262,6 +1289,7 @@ def swamp_terminal_phi(
             )
 
         def body(i: int, st: Any) -> Any:
+            """Advance one loop body iteration for the surrounding control flow."""
             t = t_seq_local[i]
             return step_fn(st, t, static, flags, None, U0, V0)
 
@@ -1318,6 +1346,18 @@ def _theta_vector_to_model_kwargs(theta: jnp.ndarray) -> Dict[str, Any]:
     """Convert the inferred theta vector into a dict of model parameters.
 
     Parameters not being inferred are taken from cfg. This function is pure and JAX-friendly.
+
+    Parameters
+    ----------
+    theta : jnp.ndarray
+        Inference vector whose elements correspond to the active entries in
+        ``param_specs``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary mapping model-parameter names to JAX scalars or ``None`` for
+        optional coefficients.
     """
     # Start with defaults (as JAX scalars for consistency under JIT).
     params: Dict[str, Any] = dict(
@@ -1387,6 +1427,17 @@ def phase_curve_model(theta: jnp.ndarray) -> jnp.ndarray:
     """Complete forward model returning planet flux vs time (shape: n_times).
 
     Returns all-NaN if SWAMP terminal Phi or subsequent map projection becomes non-finite.
+
+    Parameters
+    ----------
+    theta : jnp.ndarray
+        Inference vector containing the free retrieval parameters.
+
+    Returns
+    -------
+    jnp.ndarray
+        Planet-to-star flux ratio evaluated at the fixed observation times,
+        with shape ``(cfg.n_times,)``.
     """
     dtype = float_dtype()
     p = _theta_vector_to_model_kwargs(theta)
@@ -1411,9 +1462,11 @@ def phase_curve_model(theta: jnp.ndarray) -> jnp.ndarray:
     )
 
     def _bad(_: None) -> jnp.ndarray:
+        """Return the failure-branch result for the surrounding helper."""
         return jnp.full((times_days_jax.shape[0],), jnp.asarray(jnp.nan, dtype=dtype), dtype=dtype)
 
     def _ok(_: None) -> jnp.ndarray:
+        """Return the success-branch result for the surrounding helper."""
         T = phi_to_temperature(phi)
         I_map = temperature_to_intensity(T)
 
@@ -1483,13 +1536,13 @@ prior_hi = jnp.asarray(param_prior_hi, dtype=float_dtype())
 
 def theta_from_u(u: jnp.ndarray) -> jnp.ndarray:
     """Map unconstrained u -> physical theta vector.
-
+    
     For prior_type="uniform":
         theta ~ Uniform(lo, hi)
-
+    
     For prior_type="log10_uniform":
         log10(theta) ~ Uniform(log10(lo), log10(hi))   (i.e., log-uniform in theta)
-
+    
     In both cases we use:
         z = sigmoid(u) in (0, 1)
     and linearly interpolate in the appropriate coordinate.
@@ -1518,7 +1571,7 @@ def theta_from_u(u: jnp.ndarray) -> jnp.ndarray:
 
 def log_prior_u(u: jnp.ndarray) -> jnp.ndarray:
     """Log prior density in u-space (up to an additive constant).
-
+    
     The Uniform(lo, hi) prior in the chosen coordinate x induces the same p(u) ∝ sigmoid(u)*(1-sigmoid(u)),
     independent of lo/hi, so log p(u) is just the sum of logistic Jacobian terms.
     """
@@ -1606,12 +1659,14 @@ extra_path = cfg.out_dir / "mcmc_extra_fields.npz"
 
 
 def log_likelihood_u(u: jnp.ndarray) -> jnp.ndarray:
+    """Evaluate the log likelihood in unconstrained parameter space."""
     theta = theta_from_u(u)
     mu = phase_curve_model_jit(theta)
 
     finite = jnp.all(jnp.isfinite(mu))
 
     def _ok() -> jnp.ndarray:
+        """Return the success-branch result for the surrounding helper."""
         resid = (flux_obs_jax - mu) / obs_sigma_jax
         n = mu.size
         return -0.5 * jnp.sum(resid * resid) - n * jnp.log(obs_sigma_jax) - 0.5 * n * jnp.log(
@@ -1619,6 +1674,7 @@ def log_likelihood_u(u: jnp.ndarray) -> jnp.ndarray:
         )
 
     def _bad() -> jnp.ndarray:
+        """Return the failure-branch result for the surrounding helper."""
         return jnp.asarray(-1.0e30, dtype=float_dtype())
 
     return jax.lax.cond(finite, _ok, _bad)
@@ -1629,7 +1685,7 @@ def log_likelihood_u(u: jnp.ndarray) -> jnp.ndarray:
 
 def _value_and_grad_fwd(fun, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute (fun(x), grad fun(x)) using forward-mode JVPs.
-
+    
     This is memory-stable for expensive scans but costs O(D) JVPs.
     """
     x = jnp.asarray(x)
@@ -1643,6 +1699,7 @@ def _value_and_grad_fwd(fun, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         return y0, grad
 
     def jvp_dir(v: jnp.ndarray) -> jnp.ndarray:
+        """Jvp dir."""
         _, dy = jax.jvp(fun, (x,), (v,))
         return dy
 
@@ -1664,13 +1721,16 @@ if _use_custom_grads:
 
     @jax.custom_vjp
     def log_likelihood_u_for_grad(u: jnp.ndarray) -> jnp.ndarray:
+        """Evaluate the unconstrained log likelihood for the custom-gradient path."""
         return log_likelihood_u(u)
 
     def _ll_fwd(u: jnp.ndarray):
+        """Forward pass for the custom log-likelihood VJP."""
         val, grad = _value_and_grad_fwd(log_likelihood_u, u)
         return val, grad
 
     def _ll_bwd(grad: jnp.ndarray, g: jnp.ndarray):
+        """Backward pass for the custom log-likelihood VJP."""
         return (g * grad,)
 
     log_likelihood_u_for_grad.defvjp(_ll_fwd, _ll_bwd)
@@ -1803,6 +1863,7 @@ def _build_nss_algorithm(
     dtype = float_dtype()
 
     def _init_inner_params():
+        """Initialize init inner params."""
         if inner_kernel_requested == "mala":
             return {"step_size": jnp.asarray(float(cfg.ns_mala_step_size), dtype=dtype)}
         inv_mass = jnp.ones((n_dim,), dtype=dtype)
@@ -1813,9 +1874,11 @@ def _build_nss_algorithm(
         }
 
     def _build_constrained_logprior(logprior_fn, loglikelihood_fn, loglikelihood_0):
+        """Build a log-prior wrapper that enforces the likelihood constraint."""
         neg_inf = jnp.asarray(-jnp.inf, dtype=dtype)
 
         def _constrained(x: jnp.ndarray) -> jnp.ndarray:
+            """Apply the nested-sampling likelihood constraint to a proposed state."""
             lp = logprior_fn(x)
             ll = loglikelihood_fn(x)
             ok = jnp.isfinite(lp) & jnp.isfinite(ll) & (ll > loglikelihood_0)
@@ -1824,6 +1887,7 @@ def _build_nss_algorithm(
         return _constrained
 
     def _mala_inner_kernel(rng_key, state, logprior_fn, loglikelihood_fn, loglikelihood_0, params):
+        """Advance the inner MALA kernel."""
         step_size = jnp.asarray(params["step_size"], dtype=dtype)
         constrained = _build_constrained_logprior(logprior_fn, loglikelihood_fn, loglikelihood_0)
         m_state = _mala_init_one(state.position, constrained)
@@ -1844,6 +1908,7 @@ def _build_nss_algorithm(
         return ns_state, ns_info
 
     def _hmc_inner_kernel(rng_key, state, logprior_fn, loglikelihood_fn, loglikelihood_0, params):
+        """Advance the inner HMC kernel."""
         step_size = jnp.asarray(params["step_size"], dtype=dtype)
         inv_mass = jnp.asarray(params["inverse_mass_matrix"], dtype=dtype)
         n_leap = jnp.asarray(params["num_integration_steps"], dtype=jnp.int32)
@@ -1870,6 +1935,7 @@ def _build_nss_algorithm(
     delete = partial(ns_delete_fn, num_delete=n_delete)
 
     def update_inner_kernel_params(state, info, params):
+        """Update inner kernel params."""
         if params is None:
             params = _init_inner_params()
         if inner_kernel_requested != "hmc" or not bool(cfg.ns_hmc_adapt_mass_from_live):
@@ -1987,18 +2053,21 @@ if cfg.run_inference:
     n_steps_done = 0
 
     def _store_dead(dead_now: Any) -> None:
+        """Record the dead point selected at the current iteration."""
         if bool(cfg.ns_store_dead_on_host):
             dead_points.append(jax.device_get(dead_now))
         else:
             dead_points.append(dead_now)
 
     def _integrator_logz_pair(integrator_now: Any) -> Tuple[float, float]:
+        """Return the log-weight and log-evidence increment for one dead point."""
         # Fetch both scalars in one transfer to minimize host/device sync overhead.
         logz_pair = jax.device_get(jnp.stack((integrator_now.logZ, integrator_now.logZ_live)))
         logz_pair_np = np.asarray(logz_pair, dtype=np.float64)
         return float(logz_pair_np[0]), float(logz_pair_np[1])
 
     def _log_nss_progress(step_index: int, *, step_dt: float, logZ: float, logZ_live: float, prefix: str = "") -> float:
+        """Log nested-sampling progress diagnostics."""
         dlogZ = logZ_live - logZ
 
         step_times.append(step_dt)
@@ -2216,6 +2285,7 @@ if cfg.do_ppc:
 
     @jax.jit
     def _batch_forward(theta_batch: jnp.ndarray) -> jnp.ndarray:
+        """Evaluate the forward model over a batch of parameter vectors."""
         return jax.vmap(lambda th: phase_curve_model_jit(th))(theta_batch)
 
     preds: List[np.ndarray] = []

@@ -75,10 +75,12 @@ logger = logging.getLogger("swamp_plot_nss")
 
 
 def _utc_ts() -> str:
+    """Return the current UTC timestamp string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _describe_path(p: Path) -> str:
+    """Summarize a filesystem path for logging."""
     try:
         st = p.stat()
     except FileNotFoundError:
@@ -89,7 +91,7 @@ def _describe_path(p: Path) -> str:
 
 
 def _tail_text_lines(path: Path, *, n_lines: int = 30, max_bytes: int = 64_000) -> List[str]:
-    """Return up to the last `n_lines` lines of a text file (best-effort)."""
+    """Read the trailing lines from a text file."""
     try:
         with path.open("rb") as f:
             f.seek(0, os.SEEK_END)
@@ -113,6 +115,7 @@ def _tail_text_lines(path: Path, *, n_lines: int = 30, max_bytes: int = 64_000) 
 
 
 def log_environment() -> None:
+    """Log environment."""
     logger.info(f"=== plot_nss diagnostics start ({_utc_ts()}) ===")
     logger.info(f"OUT_DIR={OUT_DIR.resolve()}")
     logger.info(f"PLOTS_DIR={PLOTS_DIR.resolve()}")
@@ -195,6 +198,7 @@ def log_array_stats(name: str, x: Any, *, max_quantile_elems: int = 2_000_000) -
 
 
 def _require_file(path: Path, *, hint: str) -> None:
+    """Raise an error if a required file is missing."""
     if not path.exists():
         msg = f"Missing required file: {path} ({hint})"
         logger.error(msg)
@@ -203,6 +207,7 @@ def _require_file(path: Path, *, hint: str) -> None:
 
 
 def load_json_required(path: Path) -> Dict[str, Any]:
+    """Load JSON required."""
     _require_file(path, hint="nss.py should write this")
     try:
         obj = json.loads(path.read_text())
@@ -219,6 +224,7 @@ def load_npz_required(
     required_keys: Sequence[str],
     allow_pickle: bool = False,
 ) -> np.lib.npyio.NpzFile:
+    """Load `.npz` required."""
     _require_file(path, hint="nss.py should write this")
     try:
         npz = np.load(path, allow_pickle=allow_pickle)
@@ -235,6 +241,7 @@ def load_npz_required(
 
 
 def load_npz_optional(path: Path, *, allow_pickle: bool = False) -> Optional[np.lib.npyio.NpzFile]:
+    """Load an `.npz` archive if it exists."""
     if not path.exists():
         logger.info(f"Optional file not present: {path.name}")
         return None
@@ -248,6 +255,7 @@ def load_npz_optional(path: Path, *, allow_pickle: bool = False) -> Optional[np.
 
 
 def validate_1d_same_length(name_a: str, a: np.ndarray, name_b: str, b: np.ndarray) -> None:
+    """Validate 1d same length."""
     a = np.asarray(a).reshape(-1)
     b = np.asarray(b).reshape(-1)
     if a.shape[0] != b.shape[0]:
@@ -255,6 +263,7 @@ def validate_1d_same_length(name_a: str, a: np.ndarray, name_b: str, b: np.ndarr
 
 
 def check_monotonic_increasing(name: str, x: np.ndarray) -> None:
+    """Check monotonic increasing."""
     x = np.asarray(x).reshape(-1)
     if x.size < 2:
         return
@@ -268,6 +277,7 @@ def check_monotonic_increasing(name: str, x: np.ndarray) -> None:
 
 
 def _scalar_value(x: Any) -> Any:
+    """Extract a Python scalar from a NumPy array-like value."""
     arr = np.asarray(x)
     if arr.shape == ():
         return arr.item()
@@ -277,6 +287,7 @@ def _scalar_value(x: Any) -> Any:
 
 
 def _npz_scalar(npz: np.lib.npyio.NpzFile, key: str) -> Optional[Any]:
+    """Extract a scalar value from an `.npz` archive entry."""
     if key not in npz.files:
         return None
     try:
@@ -287,6 +298,7 @@ def _npz_scalar(npz: np.lib.npyio.NpzFile, key: str) -> Optional[Any]:
 
 
 def _npz_float(npz: np.lib.npyio.NpzFile, key: str) -> Optional[float]:
+    """Extract a floating-point value from an `.npz` archive entry."""
     value = _npz_scalar(npz, key)
     if value is None:
         return None
@@ -298,6 +310,7 @@ def _npz_float(npz: np.lib.npyio.NpzFile, key: str) -> Optional[float]:
 
 
 def _npz_int(npz: np.lib.npyio.NpzFile, key: str) -> Optional[int]:
+    """Extract an integer value from an `.npz` archive entry."""
     value = _npz_scalar(npz, key)
     if value is None:
         return None
@@ -309,6 +322,7 @@ def _npz_int(npz: np.lib.npyio.NpzFile, key: str) -> Optional[int]:
 
 
 def _npz_str(npz: np.lib.npyio.NpzFile, key: str) -> Optional[str]:
+    """Extract a string value from an `.npz` archive entry."""
     value = _npz_scalar(npz, key)
     if value is None:
         return None
@@ -321,6 +335,7 @@ def _npz_str(npz: np.lib.npyio.NpzFile, key: str) -> Optional[str]:
 
 
 def _safe_float_array(x: Any, *, name: str) -> Optional[np.ndarray]:
+    """Safely compute safe float array."""
     try:
         arr = np.asarray(x, dtype=float)
     except Exception as e:
@@ -486,6 +501,7 @@ def flatten_chain_draw(x: np.ndarray) -> np.ndarray:
 
 
 def save_fig(fig: plt.Figure, filename: str) -> None:
+    """Save a figure and close it."""
     path = PLOTS_DIR / filename
     try:
         fig.tight_layout()
@@ -497,11 +513,13 @@ def save_fig(fig: plt.Figure, filename: str) -> None:
 
 
 def finite_1d(x: np.ndarray) -> np.ndarray:
+    """Finite 1d."""
     x = np.asarray(x).reshape(-1)
     return x[np.isfinite(x)]
 
 
 def orders_of_magnitude_span(lo: float, hi: float) -> float:
+    """Orders of magnitude span."""
     if lo <= 0.0 or hi <= 0.0:
         return 0.0
     return float(np.log10(hi) - np.log10(lo))
@@ -531,6 +549,7 @@ def should_use_log_axis(
 
 
 def quantile_summary(v: np.ndarray) -> Tuple[float, float, float]:
+    """Compute quantile summary."""
     v = finite_1d(v)
     if v.size == 0:
         return (float("nan"), float("nan"), float("nan"))
@@ -539,6 +558,7 @@ def quantile_summary(v: np.ndarray) -> Tuple[float, float, float]:
 
 
 def format_summary_line(name: str, truth: Optional[float], q16: float, q50: float, q84: float) -> str:
+    """Format summary line."""
     if not (math.isfinite(q16) and math.isfinite(q50) and math.isfinite(q84)):
         return f"{name}: (no finite posterior samples)"
     plus = q84 - q50
@@ -550,6 +570,7 @@ def format_summary_line(name: str, truth: Optional[float], q16: float, q50: floa
 
 
 def get_param_meta_from_cfg(cfg_obj: Dict[str, Any]) -> Dict[str, Any]:
+    """Get param meta from cfg."""
     meta: Dict[str, Any] = {}
     for k in (
         "inferred_param_names",
@@ -650,6 +671,7 @@ else:
 
 
 def plot_phase_curve() -> None:
+    """Plot phase curve."""
     logger.info("Plotting phase_curve.png")
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
     ax.plot(times_days, flux_obs, ".", ms=3, label="observed", alpha=0.65)
@@ -671,6 +693,7 @@ def plot_phase_curve() -> None:
 
 
 def plot_phase_curve_residuals() -> None:
+    """Plot phase curve residuals."""
     logger.info("Plotting phase_curve_residuals.png")
     model = ppc_q["p50"] if ppc_q is not None else flux_true
     resid = flux_obs - model
@@ -686,6 +709,7 @@ def plot_phase_curve_residuals() -> None:
 
 
 def plot_posterior_1d_and_overlay_priors() -> None:
+    """Plot posterior 1d and overlay priors."""
     logger.info("Plotting per-parameter 1D posteriors")
     flat = flatten_chain_draw(samples)
     if flat.ndim != 2:
@@ -774,6 +798,7 @@ def plot_posterior_1d_and_overlay_priors() -> None:
 
 
 def plot_corner_with_text() -> None:
+    """Plot corner with text."""
     logger.info("Plotting corner_posterior.png")
     flat = flatten_chain_draw(samples)
     if flat.ndim != 2:
@@ -901,6 +926,7 @@ def plot_corner_with_text() -> None:
 
 
 def plot_nss_diagnostics() -> None:
+    """Plot nss diagnostics."""
     logger.info("Plotting NSS diagnostics (if present)")
     if extra is None:
         logger.info("No mcmc_extra_fields.npz; skipping NSS diagnostics plots.")
@@ -1073,6 +1099,7 @@ def plot_nss_diagnostics() -> None:
 
 
 def plot_maps() -> None:
+    """Plot maps."""
     logger.info("Plotting maps.png (if present)")
     if maps is None:
         logger.info("No maps file; skipping maps.png")
@@ -1088,6 +1115,7 @@ def plot_maps() -> None:
     lat = np.asarray(maps["lat"])
 
     def _edges_1d(x: np.ndarray, *, is_lat: bool) -> np.ndarray:
+        """Edges 1d."""
         x = np.asarray(x).reshape(-1)
         if x.size < 2:
             return np.array([x[0] - 0.5, x[0] + 0.5])
@@ -1101,6 +1129,7 @@ def plot_maps() -> None:
         return edges
 
     def _pcolormesh(ax: plt.Axes, lon_rad: np.ndarray, lat_rad: np.ndarray, z: np.ndarray, title: str) -> None:
+        """Render a `pcolormesh` panel with consistent axes and color scaling."""
         lon_edges = _edges_1d(lon_rad, is_lat=False)
         lat_edges = _edges_1d(lat_rad, is_lat=True)
         lon_e, lat_e = np.meshgrid(lon_edges, lat_edges)
@@ -1111,6 +1140,7 @@ def plot_maps() -> None:
         ax.get_figure().colorbar(pcm, ax=ax, shrink=0.85)
 
     def intensity_title(base: str) -> str:
+        """Compute intensity title."""
         mode = str(cfg.get("emission_model", "bolometric")).strip().lower()
         if mode == "bolometric":
             return f"{base} (I ∝ T^4)"
@@ -1151,7 +1181,6 @@ def plot_disk_renders() -> None:
         return
 
     try:
-        import jax
         import jax.numpy as jnp
         from jaxoplanet.starry.surface import Surface
         from jaxoplanet.starry.ylm import Ylm
@@ -1170,11 +1199,13 @@ def plot_disk_renders() -> None:
     lm_list: List[Tuple[int, int]] = [(ell, m) for ell in range(ydeg + 1) for m in range(-ell, ell + 1)]
 
     def ylm_from_dense(y_dense: np.ndarray) -> Any:
+        """Convert a dense coefficient array into the flattened harmonic ordering used downstream."""
         y = jnp.asarray(y_dense)
         data = {lm: y[i] for i, lm in enumerate(lm_list)}
         return Ylm(data)
 
     def make_surface(y_dense: np.ndarray) -> Any:
+        """Create a `Surface` object from dense harmonic coefficients."""
         return Surface(
             y=ylm_from_dense(y_dense),
             u=(),
@@ -1187,6 +1218,7 @@ def plot_disk_renders() -> None:
         )
 
     def safe_render(surface: Any, phase: float, res: int) -> np.ndarray:
+        """Render a surface map while tolerating signature differences and failures."""
         try:
             sig = inspect.signature(surface.render)
             if "theta" in sig.parameters:
@@ -1200,6 +1232,7 @@ def plot_disk_renders() -> None:
         return np.asarray(img)
 
     def render_grid(y_dense: np.ndarray, label: str, filename: str) -> None:
+        """Render grid."""
         surface = make_surface(y_dense)
         fig, axs = plt.subplots(1, len(render_phases), figsize=(3.2 * len(render_phases), 3.0), constrained_layout=True)
         if len(render_phases) == 1:
@@ -1226,6 +1259,7 @@ def plot_disk_renders() -> None:
 
 
 def _run_step(name: str, fn: Any) -> Optional[str]:
+    """Advance one step of the surrounding iterative procedure."""
     logger.info(f"--- {name} ---")
     t0 = time.perf_counter()
     try:

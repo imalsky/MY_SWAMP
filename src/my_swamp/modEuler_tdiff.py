@@ -67,7 +67,54 @@ def phi_timestep(
     test,
     t,
 ):
-    """Modified-Euler update for geopotential Phi (reference SWAMPE parity)."""
+    """Modified-Euler update for geopotential Phi (reference SWAMPE parity).
+    
+    Parameters
+    ----------
+    etam0 : Any
+    etam1 : Any
+    deltam0 : Any
+    deltam1 : Any
+    Phim0 : Any
+    Phim1 : Any
+    I : Any
+    J : Any
+    M : Any
+    N : Any
+    Am : Any
+    Bm : Any
+    Cm : Any
+    Dm : Any
+    Em : Any
+    Fm : Any
+    Gm : Any
+    Um : Any
+    Vm : Any
+    Pmn : Any
+    Hmn : Any
+    Pmnw : Any
+    Hmnw : Any
+    tstepcoeff1 : Any
+    tstepcoeff2 : Any
+    mJarray : Any
+    narray : Any
+    PhiFm : Any
+    dt : Any
+    a : Any
+    Phibar : Any
+    taurad : Any
+    taudrag : Any
+    forcflag : Any
+    diffflag : Any
+    sigma : Any
+    sigmaPhi : Any
+    test : Any
+    t : Any
+    
+    Returns
+    -------
+    Any
+    """
 
     # Reference SWAMPE quirk: effective conversion is /4.
     tstep1 = tstepcoeff1 / 4.0
@@ -103,6 +150,16 @@ def phi_timestep(
     )
 
     def _add_forcing(x):
+        """Return add forcing.
+        
+        Parameters
+        ----------
+        x : Any
+        
+        Returns
+        -------
+        Any
+        """
         Phiforcing = st.fwd_leg_w(dt * PhiFm, Pmnw)
         return x + Phiforcing
 
@@ -157,7 +214,54 @@ def delta_timestep(
     test,
     t,
 ):
-    """Modified-Euler update for divergence delta (reference SWAMPE parity)."""
+    """Modified-Euler update for divergence delta (reference SWAMPE parity).
+    
+    Parameters
+    ----------
+    etam0 : Any
+    etam1 : Any
+    deltam0 : Any
+    deltam1 : Any
+    Phim0 : Any
+    Phim1 : Any
+    I : Any
+    J : Any
+    M : Any
+    N : Any
+    Am : Any
+    Bm : Any
+    Cm : Any
+    Dm : Any
+    Em : Any
+    Fm : Any
+    Gm : Any
+    Um : Any
+    Vm : Any
+    Pmn : Any
+    Hmn : Any
+    Pmnw : Any
+    Hmnw : Any
+    tstepcoeff1 : Any
+    tstepcoeff2 : Any
+    mJarray : Any
+    narray : Any
+    PhiFm : Any
+    dt : Any
+    a : Any
+    Phibar : Any
+    taurad : Any
+    taudrag : Any
+    forcflag : Any
+    diffflag : Any
+    sigma : Any
+    sigmaPhi : Any
+    test : Any
+    t : Any
+    
+    Returns
+    -------
+    Any
+    """
 
     # Reference SWAMPE quirk: effective conversion is /4.
     tstep1 = tstepcoeff1 / 4.0
@@ -193,6 +297,16 @@ def delta_timestep(
     )
 
     def _add_forcing(x):
+        """Return add forcing.
+        
+        Parameters
+        ----------
+        x : Any
+        
+        Returns
+        -------
+        Any
+        """
         # Reference SWAMPE includes dt/2 here.
         Phiforcing = (narray * st.fwd_leg_w((dt / 2.0) * PhiFm, Pmnw)) / (a**2)
         return x + Phiforcing
@@ -248,7 +362,54 @@ def eta_timestep(
     test,
     t,
 ):
-    """Modified-Euler update for absolute vorticity eta (reference SWAMPE parity)."""
+    """Modified-Euler update for absolute vorticity eta (reference SWAMPE parity).
+    
+    Parameters
+    ----------
+    etam0 : Any
+    etam1 : Any
+    deltam0 : Any
+    deltam1 : Any
+    Phim0 : Any
+    Phim1 : Any
+    I : Any
+    J : Any
+    M : Any
+    N : Any
+    Am : Any
+    Bm : Any
+    Cm : Any
+    Dm : Any
+    Em : Any
+    Fm : Any
+    Gm : Any
+    Um : Any
+    Vm : Any
+    Pmn : Any
+    Hmn : Any
+    Pmnw : Any
+    Hmnw : Any
+    tstepcoeff1 : Any
+    tstepcoeff2 : Any
+    mJarray : Any
+    narray : Any
+    PhiFm : Any
+    dt : Any
+    a : Any
+    Phibar : Any
+    taurad : Any
+    taudrag : Any
+    forcflag : Any
+    diffflag : Any
+    sigma : Any
+    sigmaPhi : Any
+    test : Any
+    t : Any
+    
+    Returns
+    -------
+    Any
+    """
 
     # Reference SWAMPE quirk: forced branch uses unscaled tstepcoeff1; unforced uses /2.
     tstep1 = select(forcflag, tstepcoeff1, tstepcoeff1 / 2.0)

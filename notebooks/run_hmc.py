@@ -74,6 +74,13 @@ from tqdm.auto import tqdm
 
 @dataclass(frozen=True)
 class Config:
+    """Static configuration for the HMC retrieval driver.
+
+    The fields are typed scalars, booleans, paths, and optional floats that
+    control output behavior, solver settings, retrieval priors, and sampler
+    hyperparameters for a single Hamiltonian Monte Carlo experiment.
+    """
+
     # -----------------------
     # I/O & reproducibility
     # -----------------------
@@ -398,27 +405,33 @@ logger.info(f"BlackJAX version: {getattr(blackjax, '__version__', 'unknown')}")
 
 
 def float_dtype() -> Any:
+    """Return the JAX floating-point dtype configured for this notebook run."""
     return jnp.float64 if cfg.use_x64 else jnp.float32
 
 
 def np_float_dtype() -> Any:
+    """Return the NumPy floating-point dtype configured for this notebook run."""
     return np.float64 if cfg.use_x64 else np.float32
 
 
 def tau_hours_to_seconds(x: Any) -> Any:
+    """Convert a timescale from hours to seconds."""
     return 3600.0 * x
 
 
 def orbital_period_days_from_omega(omega_rad_s: float) -> float:
+    """Compute the orbital period in days from an angular frequency."""
     return float((2.0 * math.pi / float(omega_rad_s)) / 86400.0)
 
 
 def compute_n_steps(model_days: float, dt_seconds: float) -> int:
+    """Convert a physical duration into an integer solver step count."""
     n = int(np.round(float(model_days) * 86400.0 / float(dt_seconds)))
     return max(n, 1)
 
 
 def save_npz(path: Path, **arrays: Any) -> None:
+    """Save named arrays into a compressed ``.npz`` archive."""
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **arrays)
 
@@ -450,7 +463,7 @@ def call_with_filtered_kwargs(func, kwargs: Dict[str, Any], *, name: Optional[st
 
 def _replace_dataclass(base: Any, updates: Dict[str, Any], *, name: str) -> Any:
     """JIT-safe dataclass update.
-
+    
     `dataclasses.replace` executes at trace time and is compatible with JAX pytrees.
     This MUST work for inference parameters; rebuilding inside the model is not viable.
     """
@@ -467,12 +480,14 @@ def _replace_dataclass(base: Any, updates: Dict[str, Any], *, name: str) -> Any:
 
 
 def phi_to_temperature(phi: jnp.ndarray) -> jnp.ndarray:
+    """Convert geopotential-like solver output into a temperature proxy field."""
     dtype = float_dtype()
     T = jnp.asarray(cfg.T_ref, dtype=dtype) + phi / jnp.asarray(cfg.phi_to_T_scale, dtype=dtype)
     return jnp.maximum(T, jnp.asarray(cfg.Tmin_K, dtype=dtype))
 
 
 def planck_intensity_relative_lambda(T: jnp.ndarray, wavelength_m: float) -> jnp.ndarray:
+    """Planck intensity relative lambda."""
     dtype = float_dtype()
     T = jnp.asarray(T, dtype=dtype)
     lam = jnp.asarray(float(wavelength_m), dtype=dtype)
@@ -489,6 +504,7 @@ def planck_intensity_relative_lambda(T: jnp.ndarray, wavelength_m: float) -> jnp
 
 
 def temperature_to_intensity(T: jnp.ndarray) -> jnp.ndarray:
+    """Convert temperature fields into relative intensity maps."""
     mode = str(cfg.emission_model).strip().lower()
     if mode == "bolometric":
         return T**4
@@ -498,10 +514,12 @@ def temperature_to_intensity(T: jnp.ndarray) -> jnp.ndarray:
 
 
 def build_lm_list(ydeg: int) -> List[Tuple[int, int]]:
+    """Build the spherical-harmonic index list used by the projection helpers."""
     return [(ell, m) for ell in range(ydeg + 1) for m in range(-ell, ell + 1)]
 
 
 def ylm_from_dense(y_dense: jnp.ndarray, lm_list: Sequence[Tuple[int, int]]) -> Ylm:
+    """Convert a dense coefficient array into the flattened harmonic ordering used downstream."""
     data = {lm: y_dense[i] for i, lm in enumerate(lm_list)}
     return Ylm(data)
 
@@ -615,6 +633,7 @@ def init_state_from_fields(
     U0: jnp.ndarray,
     V0: jnp.ndarray,
 ) -> Any:
+    """Initialize init state from fields."""
     kwargs: Dict[str, Any] = dict(
         static=static,
         flags=flags,
@@ -699,9 +718,11 @@ projector_cache_path = cfg.out_dir / "projector_cache_hmc.npz"
 projector: jnp.ndarray
 
 def _build_projector() -> jnp.ndarray:
+    """Build projector."""
     logger.info("Building starry design matrix (this is a one-time cost per grid/ydeg)...")
 
     def _intensity_from_yvec(y_vec: jnp.ndarray) -> jnp.ndarray:
+        """Compute intensity from yvec."""
         ylm = ylm_from_dense(y_vec, lm_list)
         surf = Surface(
             y=ylm,
@@ -822,6 +843,13 @@ times_days_jax = jnp.asarray(times_days, dtype=float_dtype())
 
 @dataclass(frozen=True)
 class InferredParam:
+    """Metadata describing one inferred physical or numerical parameter.
+
+    Each instance stores string labels plus floating-point prior bounds and the
+    target dataclass field name needed to map a sampler coordinate back into
+    SWAMP `Static` or `RunFlags` state.
+    """
+
     name: str
     label: str
     base_value: float
@@ -840,6 +868,7 @@ def _log10_bounds_from_cfg(
     explicit_max: Optional[float],
     half_width_dex: float,
 ) -> Tuple[float, float]:
+    """Log10 bounds from cfg."""
     if explicit_min is not None or explicit_max is not None:
         if explicit_min is None or explicit_max is None:
             raise ValueError(f"Prior bounds for {name} must set both min and max or neither.")
@@ -856,6 +885,7 @@ def _log10_bounds_from_cfg(
 
 
 def _resolve_field(obj: Any, candidates: Sequence[str], logical_name: str) -> str:
+    """Resolve field."""
     for c in candidates:
         if hasattr(obj, c):
             return c
@@ -1124,12 +1154,14 @@ def theta_from_u(u: jnp.ndarray) -> jnp.ndarray:
 
 
 def log_prior_u(u: jnp.ndarray) -> jnp.ndarray:
+    """Evaluate the log prior density in unconstrained parameter space."""
     # Uniform prior in log10(theta) under the sigmoid transform:
     # p(u) ∝ sigmoid(u) * (1 - sigmoid(u)), independent per-dimension.
     return jnp.sum(jax.nn.log_sigmoid(u) + jax.nn.log_sigmoid(-u))
 
 
 def _static_and_flags_from_theta(theta: jnp.ndarray) -> Tuple[Any, Any]:
+    """Static and flags from theta."""
     static_updates: Dict[str, Any] = {k: theta[i] * s for (k, i, s) in _static_bindings}
     flags_updates: Dict[str, Any] = {k: theta[i] * s for (k, i, s) in _flags_bindings}
 
@@ -1165,6 +1197,7 @@ def swamp_terminal_phi_from_theta(theta: jnp.ndarray) -> jnp.ndarray:
         raise RuntimeError("Neither simulate_scan_last nor _step_once_state_only found; cannot run SWAMP forward.")
 
     def body(i: int, st: Any) -> Any:
+        """Advance one loop body iteration for the surrounding control flow."""
         t = t_seq[i]
         return step_fn(st, t, static, flags, None, U0, V0)
 
@@ -1271,10 +1304,12 @@ diag_path = cfg.out_dir / "diagnostics_hmc.npz"
 
 
 def _log_likelihood_from_theta(theta: jnp.ndarray) -> jnp.ndarray:
+    """Log likelihood from theta."""
     mu = phase_curve_model_theta_jit(theta)
     finite = jnp.all(jnp.isfinite(mu))
 
     def _ok() -> jnp.ndarray:
+        """Return the success-branch result for the surrounding helper."""
         resid = (flux_obs_jax - mu) / obs_sigma_jax
         n = mu.size
         return -0.5 * jnp.sum(resid * resid) - n * jnp.log(obs_sigma_jax) - 0.5 * n * jnp.log(
@@ -1282,17 +1317,20 @@ def _log_likelihood_from_theta(theta: jnp.ndarray) -> jnp.ndarray:
         )
 
     def _bad() -> jnp.ndarray:
+        """Return the failure-branch result for the surrounding helper."""
         return jnp.asarray(-1.0e30, dtype=float_dtype())
 
     return jax.lax.cond(finite, _ok, _bad)
 
 
 def log_likelihood_u(u: jnp.ndarray) -> jnp.ndarray:
+    """Evaluate the log likelihood in unconstrained parameter space."""
     theta = theta_from_u(u)
     return _log_likelihood_from_theta(theta)
 
 
 def log_posterior_u(u: jnp.ndarray) -> jnp.ndarray:
+    """Log posterior u."""
     return log_prior_u(u) + log_likelihood_u(u)
 
 
@@ -1307,6 +1345,7 @@ def _value_and_grad_fwd(fun, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         return y0, jnp.atleast_1d(dy0)
 
     def jvp_dir(v: jnp.ndarray) -> jnp.ndarray:
+        """Evaluate one JVP direction for the custom gradient helper."""
         _, dy = jax.jvp(fun, (x,), (v,))
         return dy
 
@@ -1334,13 +1373,16 @@ if _use_custom_gradients:
 
     @jax.custom_vjp
     def logdensity_fn(u: jnp.ndarray) -> jnp.ndarray:
+        """Logdensity fn."""
         return log_posterior_u(u)
 
     def _lp_fwd(u: jnp.ndarray):
+        """Lp fwd."""
         val, grad = _value_and_grad_fwd(log_posterior_u, u)
         return val, grad
 
     def _lp_bwd(grad: jnp.ndarray, g: jnp.ndarray):
+        """Lp bwd."""
         return (g * grad,)
 
     logdensity_fn.defvjp(_lp_fwd, _lp_bwd)
@@ -1351,7 +1393,8 @@ else:
 
 
 def sample_prior_u(rng_key: jax.Array, n: int) -> jax.Array:
-    """Sample u ~ logistic(Uniform(0,1)) which corresponds to bounded-uniform priors in log10(theta)."""
+    """Sample u ~ logistic(Uniform(0,1)) which corresponds to bounded-uniform priors in log10(theta).
+    """
     eps = jnp.asarray(1e-6, dtype=float_dtype())
     z = jax.random.uniform(rng_key, shape=(int(n), int(infer_dim)), minval=eps, maxval=1.0 - eps)
     return jnp.log(z) - jnp.log1p(-z)
@@ -1366,6 +1409,7 @@ _nuts_kernel = blackjax.nuts.build_kernel()
 
 
 def _nuts_step_single(rng_key: jax.Array, state: Any, step_size: jnp.ndarray, mass_matrix_diag: jnp.ndarray):
+    """Nuts step single."""
     # BlackJAX expects the "inverse_mass_matrix" argument, but the diagonal metric it uses is
     # the *covariance-like* scaling (what window_adaptation calls inverse_mass_matrix).
     # For a diagonal metric, provide an estimate of Var(u) (not 1/Var(u)).
@@ -1380,11 +1424,19 @@ def _nuts_step_single(rng_key: jax.Array, state: Any, step_size: jnp.ndarray, ma
 
 
 def _init_nuts_state(position_u: jnp.ndarray) -> Any:
+    """Initialize init nuts state."""
     return blackjax.nuts.init(position_u, logdensity_fn)
 
 
 @dataclass(frozen=True)
 class DualAveragingParams:
+    """Hyperparameters for the NUTS dual-averaging adaptation scheme.
+
+    The fields are floating-point scalars that parameterize the warmup update
+    equations for target acceptance, shrinkage strength, iteration offset, and
+    averaging decay.
+    """
+
     target_accept: float
     gamma: float
     t0: float
@@ -1403,8 +1455,16 @@ _DA_PARAMS = DualAveragingParams(
 def _da_init(step_size0: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Initialize dual averaging state (batched over chains).
 
-    Returns:
-      log_step_size, log_step_size_bar, h_bar, step, mu
+    Parameters
+    ----------
+    step_size0 : jnp.ndarray
+        Initial step sizes for each chain, typically with shape ``(num_chains,)``.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Tuple ``(log_step_size, log_step_size_bar, h_bar, step, mu)`` used by
+        the batched dual-averaging warmup recursion.
     """
     step_size0 = jnp.asarray(step_size0, dtype=float_dtype())
     log_eps0 = jnp.log(step_size0)
@@ -1422,6 +1482,7 @@ def _da_update(
     da_state: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
     accept_rate: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Apply one dual-averaging update step."""
     log_eps, log_eps_bar, h_bar, step, mu = da_state
 
     step = step + jnp.asarray(1, dtype=jnp.int32)
@@ -1442,11 +1503,17 @@ def _da_update(
 def _welford_init(init_positions: jax.Array) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """JIT-safe Welford initialization.
 
-    init_positions: (num_chains, dim)
-    Returns:
-        count: (num_chains,)
-        mean:  (num_chains, dim)
-        m2:    (num_chains, dim)
+    Parameters
+    ----------
+    init_positions : jax.Array
+        Initial chain positions with shape ``(num_chains, dim)``.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Tuple ``(count, mean, m2)`` used by the batched Welford variance update,
+        with shapes ``(num_chains,)``, ``(num_chains, dim)``, and
+        ``(num_chains, dim)``.
     """
     if init_positions.ndim != 2:
         raise ValueError(f"_welford_init expects (num_chains, dim), got shape {init_positions.shape}")
@@ -1466,6 +1533,7 @@ def _welford_update(
     w_state: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
     x: jnp.ndarray,  # (num_chains, dim)
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Update the running covariance statistics with one new sample."""
     count, mean, m2 = w_state
     count_new = count + jnp.asarray(1, dtype=jnp.int32)
     count_f = count_new.astype(float_dtype())[:, None]
@@ -1479,7 +1547,7 @@ def _welford_update(
 
 def _extract_info_field(info: Any, name: str, default: Any) -> Any:
     """Extract a field from a BlackJAX info pytree.
-
+    
     BlackJAX info objects are typically NamedTuples/dataclasses, but in some
     versions they may be dict-like. This helper supports both.
     """
@@ -1495,6 +1563,7 @@ def warmup_and_sample_nuts(
     jnp.ndarray,  # u_samples: (num_chains, num_samples, dim)
     Dict[str, jnp.ndarray],  # diagnostics (device arrays)
 ]:
+    """Run warmup and sample nuts."""
     num_chains = int(init_positions_u.shape[0])
     dim = int(init_positions_u.shape[1])
 
@@ -1514,6 +1583,7 @@ def warmup_and_sample_nuts(
     welford = _welford_init(init_positions_u)
 
     def phase1_body(carry, xs):
+        """Advance one loop body iteration for the surrounding control flow."""
         states, da_state, w_state = carry
         key_t, i_t = xs
 
@@ -1528,6 +1598,7 @@ def warmup_and_sample_nuts(
         da_state = _da_update(da_state, acc)
 
         def _do_update(ws):
+            """Apply one warmup update step."""
             return _welford_update(ws, states.position)
 
         w_state = jax.lax.cond(i_t >= collect_start, _do_update, lambda ws: ws, w_state)
@@ -1561,6 +1632,7 @@ def warmup_and_sample_nuts(
     da2 = _da_init(step_size1)
 
     def phase2_body(carry, key_t):
+        """Advance one loop body iteration for the surrounding control flow."""
         states, da_state = carry
         step_sizes = jnp.exp(da_state[0])
         keys = jax.random.split(key_t, num_chains)
@@ -1587,6 +1659,7 @@ def warmup_and_sample_nuts(
     num_samples = int(cfg.num_samples)
 
     def sample_body(states, key_t):
+        """Advance one loop body iteration for the surrounding control flow."""
         keys = jax.random.split(key_t, num_chains)
         states, infos = jax.vmap(_nuts_step_single)(keys, states, step_sizes_final, mass_diag_est)
 
@@ -1754,6 +1827,7 @@ if bool(cfg.do_ppc):
 
     @jax.jit
     def _batch_forward(theta_batch: jnp.ndarray) -> jnp.ndarray:
+        """Evaluate the forward model over a batch of parameter vectors."""
         return jax.vmap(phase_curve_model_theta_jit)(theta_batch)
 
     preds: List[np.ndarray] = []
@@ -1785,6 +1859,7 @@ maps_path = cfg.out_dir / "maps_truth_and_posterior_summary_hmc.npz"
 
 
 def compute_maps_for_theta(theta: jnp.ndarray) -> Dict[str, np.ndarray]:
+    """Compute maps for theta."""
     phi = swamp_terminal_phi_from_theta(theta)
     T = phi_to_temperature(phi)
     I_map = temperature_to_intensity(T)

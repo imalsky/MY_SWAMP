@@ -65,6 +65,7 @@ ATOL = {
 
 
 def _phase_curve_from_phi(phi: np.ndarray, phase_angles: np.ndarray) -> np.ndarray:
+    """Advance phase curve from phi."""
     J, I = phi.shape
     lambdas = np.linspace(-np.pi, np.pi, I, endpoint=False)[None, :]
     mus = np.polynomial.legendre.leggauss(J)[0][:, None]
@@ -82,6 +83,7 @@ def _phase_curve_from_phi(phi: np.ndarray, phase_angles: np.ndarray) -> np.ndarr
 
 
 def _assert_x64_enabled() -> None:
+    """Require x64 mode for the parity regression tests."""
     import jax
 
     if not bool(jax.config.read("jax_enable_x64")):
@@ -94,6 +96,7 @@ def _assert_x64_enabled() -> None:
 @pytest.mark.parity
 @pytest.mark.parametrize("case_name", list(CASES.keys()))
 def test_reference_parity_terminal_and_snapshots(case_name: str) -> None:
+    """Verify parity against the saved terminal fields and snapshot diagnostics."""
     _assert_x64_enabled()
     from my_swamp.model import run_model_scan
 
@@ -130,6 +133,7 @@ def test_reference_parity_terminal_and_snapshots(case_name: str) -> None:
 @pytest.mark.parity
 @pytest.mark.parametrize("case_name", list(CASES.keys()))
 def test_reference_retrieval_projection_parity(case_name: str) -> None:
+    """Verify parity for the simplified retrieval phase-curve projection."""
     _assert_x64_enabled()
     from my_swamp.model import run_model_scan_final
 

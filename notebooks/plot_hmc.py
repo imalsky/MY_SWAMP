@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence
 
 import matplotlib
 import numpy as np
@@ -49,16 +49,19 @@ logger = logging.getLogger("swamp_plot")
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
+    """Load a JSON file."""
     return json.loads(path.read_text())
 
 
 def _load_npz_optional(path: Path) -> Optional[np.lib.npyio.NpzFile]:
+    """Load an `.npz` archive if it exists."""
     if path.exists():
         return np.load(path)
     return None
 
 
 def _save_fig(fig: plt.Figure, name: str) -> None:
+    """Save a figure and close it."""
     out = PLOTS_DIR / name
     fig.savefig(out, dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -85,6 +88,7 @@ def _flatten_chains(samples: np.ndarray) -> np.ndarray:
 
 
 def _truth_value_for_param(name: str, cfg: Dict[str, Any]) -> Optional[float]:
+    """Look up the configured truth value for a posterior parameter."""
     # Mapping from posterior_samples param name -> config key
     key_map = {
         "taurad_hours": "taurad_true_hours",
@@ -125,6 +129,7 @@ def plot_phase_curve_fit(
     cfg: Dict[str, Any],
     ppc_q: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
+    """Plot the observed phase curve against the truth and PPC median."""
     fig = plt.figure(figsize=(9, 4.5))
     ax = fig.add_subplot(111)
 
@@ -164,6 +169,7 @@ def plot_phase_curve_residuals(
     cfg: Dict[str, Any],
     ppc_q: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
+    """Plot phase curve residuals."""
     fig = plt.figure(figsize=(9, 4.5))
     ax = fig.add_subplot(111)
 
@@ -203,6 +209,7 @@ def plot_posterior_tau_corner(
     taudrag_hours: np.ndarray,
     cfg: Dict[str, Any],
 ) -> None:
+    """Plot the joint posterior for the radiative and drag timescales."""
     taurad = _flatten_chains(taurad_hours)
     taudrag = _flatten_chains(taudrag_hours)
 
@@ -249,6 +256,7 @@ def plot_posterior_param_corner(
     param_labels: Optional[Sequence[str]],
     cfg: Dict[str, Any],
 ) -> None:
+    """Plot the joint posterior for all inferred parameters."""
     if param_samples.ndim != 3:
         raise ValueError(f"param_samples must be (chains, draws, dim), got shape {param_samples.shape}")
     dim = int(param_samples.shape[-1])
@@ -291,7 +299,6 @@ def plot_posterior_param_corner(
                 ax.axis("off")
                 continue
 
-            xj = flat[:, j] if j != i else None
             truth_j = _truth_value_for_param(param_names[j], cfg) if j != i else None
 
             if i == j:
@@ -350,6 +357,7 @@ def plot_nuts_diagnostics(
     samples: np.lib.npyio.NpzFile,
     cfg: Dict[str, Any],
 ) -> None:
+    """Plot chain-level NUTS diagnostics from the saved samples."""
     taurad = np.asarray(samples["taurad_hours"])
     taudrag = np.asarray(samples["taudrag_hours"])
     num_chains = taurad.shape[0]
@@ -433,6 +441,7 @@ def plot_nuts_diagnostics(
 
 
 def main() -> None:
+    """Generate the HMC diagnostic plots."""
     logger.info(f"OUT_DIR={OUT_DIR.resolve()}")
     logger.info("Generating plots: phase curve fit, residuals, posterior corner, tau corner, NUTS diagnostics.")
 

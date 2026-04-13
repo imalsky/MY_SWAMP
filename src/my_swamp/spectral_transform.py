@@ -53,7 +53,7 @@ except ImportError:  # pragma: no cover
 
 def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
     """Return uniformly spaced longitudes in [-pi, pi).
-
+    
     Parameters
     ----------
     I : int
@@ -61,11 +61,15 @@ def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
     dtype : optional
         Floating dtype for the returned array. If omitted, uses
         :func:`my_swamp.dtypes.float_dtype`.
-
+    
     Notes
     -----
     The reference SWAMPE code constructs longitudes as a uniform grid in
     ``[-pi, pi)`` with ``endpoint=False``. We keep the same convention here.
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     I = int(I)
     if dtype is None:
@@ -75,10 +79,24 @@ def build_lambdas(I: int, dtype=None) -> jnp.ndarray:
 
 def gauss_legendre(J: int, dtype=None) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Gaussian quadrature nodes/weights (mus, w) for order J.
-
+    
     The reference SWAMPE uses ``scipy.special.roots_legendre(J)``.
     For portability, this implementation falls back to
     ``numpy.polynomial.legendre.leggauss(J)`` if SciPy is unavailable.
+    
+    Parameters
+    ----------
+    J : int
+        Number of Gaussian latitude nodes.
+    dtype : Any
+        Floating dtype for the returned arrays. If omitted, uses
+        :func:`my_swamp.dtypes.float_dtype`.
+    
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple ``(mus, w)`` containing Gaussian latitudes and quadrature weights,
+        each with shape ``(J,)``.
     """
     if dtype is None:
         dtype = float_dtype()
@@ -97,7 +115,21 @@ def gauss_legendre(J: int, dtype=None) -> Tuple[jnp.ndarray, jnp.ndarray]:
 
 
 def _scaling_table(M: int, N: int) -> np.ndarray:
-    """Scaling table matching reference SWAMPE's factorial-based normalization."""
+    """Scaling table matching reference SWAMPE's factorial-based normalization.
+    
+    Parameters
+    ----------
+    M : int
+        Maximum zonal wavenumber.
+    N : int
+        Maximum total degree.
+    
+    Returns
+    -------
+    np.ndarray
+        Real scaling factors with shape ``(M+1, N+1)`` used to normalize the
+        associated Legendre basis in the same way as the reference SWAMPE code.
+    """
     M = int(M)
     N = int(N)
     scale = np.zeros((M + 1, N + 1), dtype=np.float64)
@@ -117,16 +149,23 @@ def _scaling_table(M: int, N: int) -> np.ndarray:
 def _lpmn_fallback(M: int, N: int, x: float) -> Tuple[np.ndarray, np.ndarray]:
     """Fallback for ``scipy.special.lpmn`` using a stable recurrence.
 
-    Returns
-    -------
-    P, dP : np.ndarray
-        Arrays of shape (M+1, N+1), matching SciPy's ``lpmn`` ordering:
-        first index is order m, second is degree n.
-
     Notes
     -----
     - Includes the Condon–Shortley phase (``(-1)^m``), matching SciPy.
     - The derivative is with respect to ``x`` (not latitude).
+    
+    Parameters
+    ----------
+    M : int
+    N : int
+    x : float
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Tuple ``(P, dP)`` of NumPy arrays with shape ``(M+1, N+1)`` matching
+        SciPy's ``lpmn`` ordering, where the first index is order ``m`` and the
+        second index is degree ``n``.
     """
     M = int(M)
     N = int(N)
@@ -180,23 +219,31 @@ def _lpmn_fallback(M: int, N: int, x: float) -> Tuple[np.ndarray, np.ndarray]:
 def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute associated Legendre polynomials and derivatives at Gaussian latitudes.
 
-    Returns
-    -------
-    Pmn, Hmn : jnp.ndarray
-        Arrays of shape ``(J, M+1, N+1)`` matching reference SWAMPE.
-
     Implementation notes
     --------------------
     The reference SWAMPE uses SciPy's ``special.lpmn`` and then applies:
-
+    
     - a factorial-based normalization (see `_scaling_table`)
     - a sign flip for odd m (which cancels SciPy's Condon–Shortley phase)
-
+    
     For portability across SciPy versions, we:
     - use SciPy's ``assoc_legendre_p_all`` when present (preferred modern API)
     - otherwise use SciPy's ``lpmn`` when present
     - otherwise fall back to `_lpmn_fallback`, which matches SciPy's output up to
       floating round-off.
+    
+    Parameters
+    ----------
+    J : int
+    M : int
+    N : int
+    mus : jnp.ndarray
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple ``(Pmn, Hmn)`` of basis arrays with shape ``(J, M+1, N+1)``
+        matching the reference SWAMPE normalization.
     """
     J = int(J)
     M = int(M)
@@ -241,7 +288,18 @@ def PmnHmn(J: int, M: int, N: int, mus: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.n
 
 
 def fwd_fft_trunc(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
-    """Fourier transform along longitude, truncating to m=0..M."""
+    """Fourier transform along longitude, truncating to m=0..M.
+    
+    Parameters
+    ----------
+    data : jnp.ndarray
+    I : int
+    M : int
+    
+    Returns
+    -------
+    jnp.ndarray
+    """
     I = int(I)
     M = int(M)
     datahat = jnp.fft.fft(data / I, n=I, axis=1)
@@ -250,11 +308,19 @@ def fwd_fft_trunc(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
 
 def fwd_fft_trunc_batch(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
     """Batched Fourier transform along longitude, truncating to m=0..M.
-
+    
     Parameters
     ----------
-    data : (..., J, I)
-        Leading dimensions are treated as batch dimensions.
+    data : jnp.ndarray
+        Batched longitude fields with trailing shape ``(..., J, I)``.
+    I : int
+        Total longitude count used by the FFT.
+    M : int
+        Maximum retained zonal wavenumber.
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     I = int(I)
     M = int(M)
@@ -263,28 +329,75 @@ def fwd_fft_trunc_batch(data: jnp.ndarray, I: int, M: int) -> jnp.ndarray:
 
 
 def invrs_fft(approxXim: jnp.ndarray, I: int) -> jnp.ndarray:
-    """Inverse Fourier transform along longitude (expects full I coefficients)."""
+    """Inverse Fourier transform along longitude (expects full I coefficients).
+    
+    Parameters
+    ----------
+    approxXim : jnp.ndarray
+        Fourier coefficients with longitude axis ``M+1`` or ``I`` already laid
+        out for inverse transformation.
+    I : int
+        Number of longitude points in physical space.
+    
+    Returns
+    -------
+    jnp.ndarray
+        Complex-valued longitude-space field with shape ``(..., I)``.
+    """
     I = int(I)
     return jnp.fft.ifft(I * approxXim, n=I, axis=1)
 
 
 def weighted_legendre_basis(Pmn: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
-    """Precompute w-weighted Legendre basis used by forward transforms."""
+    """Precompute w-weighted Legendre basis used by forward transforms.
+    
+    Parameters
+    ----------
+    Pmn : jnp.ndarray
+        Associated Legendre basis with shape ``(J, M+1, N+1)``.
+    w : jnp.ndarray
+        Gaussian quadrature weights with shape ``(J,)``.
+    
+    Returns
+    -------
+    jnp.ndarray
+        Weighted basis ``w[:, None, None] * Pmn`` with the same shape as
+        ``Pmn``.
+    """
     return jnp.asarray(w)[:, None, None] * Pmn
 
 
 def fwd_leg_w(data: jnp.ndarray, Pmnw: jnp.ndarray) -> jnp.ndarray:
-    """Forward Legendre transform with preweighted basis."""
+    """Forward Legendre transform with preweighted basis.
+    
+    Parameters
+    ----------
+    data : jnp.ndarray
+        Latitude-by-wavenumber field with shape ``(J, M+1)``.
+    Pmnw : jnp.ndarray
+        Weighted Legendre basis produced by :func:`weighted_legendre_basis`.
+    
+    Returns
+    -------
+    jnp.ndarray
+        Spectral coefficients with shape ``(M+1, N+1)``.
+    """
     return jnp.einsum("jm,jmn->mn", data, Pmnw)
 
 
 def fwd_leg_w_batch(data: jnp.ndarray, Pmnw: jnp.ndarray) -> jnp.ndarray:
     """Batched forward Legendre transform with preweighted basis.
-
+    
     Parameters
     ----------
-    data : (K, J, M+1)
-        Batch of K Fourier fields to transform.
+    data : jnp.ndarray
+        Batched Fourier fields with shape ``(K, J, M+1)``.
+    Pmnw : jnp.ndarray
+        Preweighted Legendre basis with shape ``(J, M+1, N+1)``.
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     return jnp.einsum("kjm,jmn->kmn", data, Pmnw)
 
@@ -298,15 +411,25 @@ def fwd_leg(
     w: jnp.ndarray,
 ) -> jnp.ndarray:
     """Forward Legendre transform.
-
+    
     Parameters
     ----------
-    data : (J, M+1) complex
-        Fourier coefficients as a function of latitude.
-    Pmn : (J, M+1, N+1) real
-        Associated Legendre basis.
-    w : (J,) real
-        Gauss–Legendre weights.
+    data : jnp.ndarray
+        Fourier coefficients as a function of latitude with shape ``(J, M+1)``.
+    J : int
+        Number of Gaussian latitudes.
+    M : int
+        Maximum retained zonal wavenumber.
+    N : int
+        Maximum total wavenumber.
+    Pmn : jnp.ndarray
+        Associated Legendre basis with shape ``(J, M+1, N+1)``.
+    w : jnp.ndarray
+        Gauss–Legendre quadrature weights with shape ``(J,)``.
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     # Reference implementation: out[m,n] = sum_j w[j] * data[j,m] * Pmn[j,m,n]
     return fwd_leg_w(data, weighted_legendre_basis(Pmn, w))
@@ -321,9 +444,24 @@ def invrs_leg(
     Pmn: jnp.ndarray,
 ) -> jnp.ndarray:
     """Inverse Legendre transform.
-
+    
     Returns Fourier coefficients approxXim of shape (J, I), with the last M
     columns containing the negative-m modes (-M..-1).
+    
+    Parameters
+    ----------
+    legcoeff : jnp.ndarray
+    I : int
+    J : int
+    M : int
+    N : int
+    Pmn : jnp.ndarray
+
+    Returns
+    -------
+    jnp.ndarray
+        Longitude Fourier coefficients with shape ``(J, I)`` whose final
+        ``M`` columns contain the reconstructed negative-``m`` modes.
     """
     I = int(I)
     J = int(J)
@@ -356,7 +494,26 @@ def invrsUV(
     tstepcoeffmn: jnp.ndarray,
     marray: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Compute U,V from spectral divergence/vorticity (diagnostic)."""
+    """Compute U,V from spectral divergence/vorticity (diagnostic).
+    
+    Parameters
+    ----------
+    deltamn : jnp.ndarray
+    etamn : jnp.ndarray
+    fmn : jnp.ndarray
+    I : int
+    J : int
+    M : int
+    N : int
+    Pmn : jnp.ndarray
+    Hmn : jnp.ndarray
+    tstepcoeffmn : jnp.ndarray
+    marray : jnp.ndarray
+    
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+    """
     deltamn = deltamn.at[:, 0].set(0.0)
     etamn = etamn.at[:, 0].set(0.0)
 
@@ -395,12 +552,26 @@ def invrsUV_with_coeffs(
     coefficients of U and V (shape ``(J, M+1)``). These coefficients are
     already available immediately before the inverse FFT to physical space.
 
+    Parameters
+    ----------
+    deltamn : jnp.ndarray
+    etamn : jnp.ndarray
+    fmn : jnp.ndarray
+    I : int
+    J : int
+    M : int
+    N : int
+    Pmn : jnp.ndarray
+    Hmn : jnp.ndarray
+    tstepcoeffmn : jnp.ndarray
+    marray : jnp.ndarray
+
     Returns
     -------
-    Unew, Vnew : jnp.ndarray
-        Physical-space winds of shape ``(J, I)`` (complex IFFT output).
-    Um_trunc, Vm_trunc : jnp.ndarray
-        Truncated Fourier coefficients (positive m only) of shape ``(J, M+1)``.
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Tuple ``(Unew, Vnew, Um_trunc, Vm_trunc)`` containing physical-space
+        winds with shape ``(J, I)`` and truncated positive-``m`` Fourier
+        coefficients with shape ``(J, M+1)``.
     """
 
     deltamn = deltamn.at[:, 0].set(0.0)
@@ -440,7 +611,28 @@ def diagnostic_eta_delta(
     mJarray: jnp.ndarray,
     dt: float,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute (eta, delta) from Fourier wind coefficients (diagnostic)."""
+    """Compute (eta, delta) from Fourier wind coefficients (diagnostic).
+    
+    Parameters
+    ----------
+    Um : jnp.ndarray
+    Vm : jnp.ndarray
+    fmn : jnp.ndarray
+    I : int
+    J : int
+    M : int
+    N : int
+    Pmn : jnp.ndarray
+    Hmn : jnp.ndarray
+    w : jnp.ndarray
+    tstepcoeff : jnp.ndarray
+    mJarray : jnp.ndarray
+    dt : float
+    
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    """
     dt_j = jnp.asarray(dt, dtype=float_dtype())
     coeff = tstepcoeff / (2.0 * dt_j)
 

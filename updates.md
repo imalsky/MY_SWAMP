@@ -1,17 +1,21 @@
 # Remaining Updates
 
-Last checked: 2026-03-03 (PST)
+Last checked: 2026-04-01 (PDT)
 
 Already-fixed items were removed. This file now lists only unresolved work.
 
 ## Current Verified Status
 
-1. Correctness checks pass locally on CPU:
-   - `JAX_PLATFORMS=cpu pytest -q` -> `20 passed`
-   - `JAX_PLATFORMS=cpu pytest -q -m smoke` -> `5 passed, 15 deselected`
-   - `JAX_PLATFORMS=cpu pytest -q -m parity` -> `4 passed, 16 deselected`
-   - `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity` -> expected `4 failed` (x64 gate enforced)
-2. Lint recheck is complete in `swamp_compare`:
+1. Correctness checks are validated against the supported CPU dependency matrix:
+   - `jax==0.4.38`
+   - `jaxlib==0.4.38`
+   - `numpy==1.26.4`
+   - `scipy==1.17.0`
+   - `JAX_PLATFORMS=cpu pytest -q` -> `23 passed`
+   - `JAX_PLATFORMS=cpu pytest -q -m smoke` -> `8 passed, 15 deselected`
+   - `JAX_PLATFORMS=cpu pytest -q -m parity` -> `4 passed, 19 deselected`
+   - `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity` -> expected parity failures (x64 gate enforced)
+2. Lint recheck is complete in `MY_SWAMP`:
    - `ruff check src tests testing notebooks/nss.py --select F401,F841` -> pass
    - `ruff check src tests testing notebooks/nss.py` -> pass
    - `python -m vulture src tests testing notebooks/nss.py` -> pass (with explicit `pyproject.toml` ignore list for known callback/API-hook symbols)

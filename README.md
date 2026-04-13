@@ -2,7 +2,7 @@
 
 A JAX rewrite of the SWAMPE spectral shallow‑water model on the sphere. The numerical core runs inside `jax.lax.scan`, so the forward simulation is end‑to‑end differentiable with respect to continuous physical parameters and explicit initial conditions.
 
-Document version: 2026-02-13
+Document version: 2026-04-01
 
 ---
 
@@ -80,8 +80,7 @@ MY_SWAMP/
 │       ├── initial_conditions.py    # Supported resolutions, analytic ICs, nonlinear term construction
 │       ├── continuation.py          # Pickle I/O for save/load/continuation
 │       ├── plotting.py              # Matplotlib plotting helpers + GIF generation
-│       ├── autodiff_utils.py        # Forward-mode utilities (JVP chunking)
-│       └── test_unit.py             # Unit tests for transforms and wind inversion (pytest-friendly)
+│       └── autodiff_utils.py        # Forward-mode utilities (JVP chunking)
 ├── tests/                           # Pytest suite for packaging + smoke tests
 ├── notebooks/                       # Example notebooks
 ├── paper/                           # Paper / writeup assets
@@ -97,11 +96,11 @@ Reference (NumPy/SciPy) SWAMPE code is not shipped inside this archive. When thi
 Requirements (as packaged by `setup.py`):
 
 - Python 3.9+
-- `numpy>=1.24`
+- `numpy>=1.26,<2.0`
 - `scipy>=1.10`  
   Used for Gauss–Legendre nodes/weights and associated Legendre polynomials. (There is fallback code for SciPy-free environments, but the default package installation includes SciPy.)
-- `jax>=0.4,<1.0`  
-  `jaxlib` is intentionally not pinned here; follow JAX’s recommended install method for your platform (CPU/GPU/TPU).
+- `jax>=0.4.31,<0.5`  
+  This repository's validated CPU test matrix is the JAX 0.4 line with NumPy 1.x. `jaxlib` is intentionally not pinned here; follow JAX’s recommended install method for your platform (CPU/GPU/TPU).
 - `matplotlib>=3.7` and `imageio>=2.31`  
   Used by `my_swamp.plotting` (the module is lazily imported, but these dependencies are included in the default install requirements).
 
@@ -492,6 +491,8 @@ The simulation is differentiable with respect to:
 - Continuous scalar parameters that enter the scan (e.g., `DPhieq`, `taurad`, `taudrag`, `K6`, `K6Phi`, `Phibar`, `omega`, `a`, `dt`, `alpha`).
 - Explicit initial conditions (`eta0_init`, `delta0_init`, `Phi0_init`) as long as you avoid side effects and keep array shapes static.
 
+`K6Phi=None` is a deliberate API default meaning "inherit `K6`". This preserves SWAMPE's legacy behavior where geopotential diffusion uses the same coefficient as vorticity/divergence unless you explicitly override it.
+
 Non-differentiable aspects include:
 
 - File I/O (saving/loading continuation pickles)
@@ -516,7 +517,7 @@ From the repository root:
 ```bash
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
-pytest -q
+JAX_PLATFORMS=cpu pytest -q
 ```
 
 Notes:
@@ -529,13 +530,21 @@ export SWAMPE_JAX_ENABLE_X64=0
 pytest -q
 ```
 
+Optional long-run parity report against legacy `SWAMPE`:
+
+```bash
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/compare_long_run_parity.py --days 100
+```
+
+This is intentionally a user-invoked script under `testing/`, not an automatic pytest case. It writes a JSON summary plus terminal-field arrays and absolute-error arrays under `testing/long_run_parity_outputs/`.
+It also writes `terminal_comparison.png`, which shows the legacy SWAMPE fields, the JAX fields, and the signed fractional differences at the terminal step.
+
 ---
 
 ## 13. Known Limitations
 
 - Supported resolutions are limited to `M in {42, 63, 106}` as defined in `initial_conditions.spectral_params`.
 - Supported test modes are `test=None` (forced), `test=1`, and `test=2`.
-- The CLI accepts `--use-scipy-basis`, but the current code does not wire this flag into basis construction; it is a placeholder.
 - Continuation saving defaults to `data/` (relative to the working directory) and plotting defaults to `plots/`.
 
 ---
@@ -554,4 +563,4 @@ pytest -q
 | Continuation save/load | `continuation.py` |
 | Plotting | `plotting.py` |
 | Forward-mode AD utils | `autodiff_utils.py` |
-| Transform/unit tests | `test_unit.py`, `tests/` |
+| Transform/unit tests | `tests/test_transform_stack.py`, `tests/` |

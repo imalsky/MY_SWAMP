@@ -47,8 +47,10 @@ _BACKEND_INFO = preflight_backend(_TEST_BACKEND, require_gpu=_REQUIRE_GPU)
 
 
 def pytest_report_header(config):
+    """Report backend information in the pytest header."""
     return " | ".join(backend_info_lines(_BACKEND_INFO))
 
 
 def pytest_configure(config):
+    """Register custom pytest markers for the MY_SWAMP test suite."""
     config.addinivalue_line("markers", "parity: regression tests against trusted SWAMPE reference outputs.")

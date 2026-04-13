@@ -15,24 +15,25 @@ import numpy as np
 
 
 def _as_path(custompath: Optional[str]) -> Path:
+    """Return ``Path(custompath)`` or ``Path("data")`` when *custompath* is None."""
     if custompath is None:
         return Path("data")
     return Path(custompath)
 
 
 def write_pickle(filename: str, data: Any, custompath: Optional[str] = None) -> None:
-    """
-    Writes a pickle file from the data.
-    
+    """Serialize ``data`` to a pickle file.
+
     Parameters
     ----------
     filename : str
-        name of the pickle file to be saved
+        Output filename relative to ``custompath`` or the default ``data/``
+        directory.
     data : Any
-        a Python array of data to be saved
+        Object to serialize.
     custompath : str, optional
-        path to the custom directory, defaults to None. 
-        If None, files will be saved in the parent_directory/data/.
+        Base directory for the output file. If omitted, data is written under
+        the local ``data/`` directory.
     """
     base = _as_path(custompath)
     base.mkdir(parents=True, exist_ok=True)
@@ -43,8 +44,7 @@ def write_pickle(filename: str, data: Any, custompath: Optional[str] = None) -> 
 
 
 def read_pickle(filename: str, custompath: Optional[str] = None) -> Any:
-    """
-    Loads a pickle file.
+    """Loads a pickle file.
     
     Parameters
     ----------
@@ -52,7 +52,7 @@ def read_pickle(filename: str, custompath: Optional[str] = None) -> Any:
         name of the pickle file to be read
     custompath : str, optional
         path to the custom directory, defaults to None
-
+    
     Returns
     -------
     Any
@@ -65,9 +65,8 @@ def read_pickle(filename: str, custompath: Optional[str] = None) -> Any:
 
 
 def compute_timestamp(units: str, t: int, dt: float) -> str:
-    """
-    Computes timestamp in appropriate units to append to the saved data files.
-
+    """Computes timestamp in appropriate units to append to the saved data files.
+    
     Parameters
     ----------
     units : str
@@ -76,7 +75,7 @@ def compute_timestamp(units: str, t: int, dt: float) -> str:
         number of current timestep
     dt : float
         timestep length, in seconds
-
+    
     Returns
     -------
     str
@@ -99,9 +98,8 @@ def compute_timestamp(units: str, t: int, dt: float) -> str:
 
 
 def compute_t_from_timestamp(units: str, timestamp: int, dt: float) -> int:
-    """
-    Computes the current timestep t based on timestamp, units, and timestep size.
-
+    """Computes the current timestep t based on timestamp, units, and timestep size.
+    
     Parameters
     ----------
     units : str
@@ -110,7 +108,7 @@ def compute_t_from_timestamp(units: str, timestamp: int, dt: float) -> int:
         Timestamp in specified units
     dt : float
         timestep length, in seconds
-
+    
     Returns
     -------
     int
@@ -143,30 +141,29 @@ def save_data(
     geopotdata: Any,
     custompath: Optional[str] = None
 ) -> None:
-    """
-    Saves the data for plotting and continuation purposes.
-    
+    """Persist model fields and diagnostic time series for restart/plotting.
+
     Parameters
     ----------
     timestamp : str or int
-        timestamp to be used for naming saved files
-    etadata : array (J, I)
-        data for absolute vorticity eta
-    deltadata : array (J, I)
-        data for divergence delta
-    Phidata : array (J, I)
-        data for geopotential Phi
-    U : array (J, I)
-        data for zonal winds U
-    V : array (J, I)
-        data for meridional winds V
-    spinupdata : array
-        time series array of minimum length of wind vector and RMS winds
-    geopotdata : array
-        time series array of minimum and maximum of the geopotential Phi
+        Timestamp token appended to the saved field filenames.
+    etadata : array-like, shape ``(J, I)``
+        Absolute-vorticity field.
+    deltadata : array-like, shape ``(J, I)``
+        Divergence field.
+    Phidata : array-like, shape ``(J, I)``
+        Geopotential field.
+    U : array-like, shape ``(J, I)``
+        Zonal wind field.
+    V : array-like, shape ``(J, I)``
+        Meridional wind field.
+    spinupdata : array-like
+        Spinup diagnostics, typically wind minima and RMS speeds over time.
+    geopotdata : array-like
+        Geopotential diagnostics, typically minima and maxima over time.
     custompath : str, optional
-        path to the custom directory, defaults to None. 
-        If None, files will be saved in the parent_directory/data/
+        Base directory for output files. If omitted, files are written under the
+        local ``data/`` directory.
     """
     ts = str(timestamp)
     
@@ -184,29 +181,22 @@ def load_data(
     timestamp: Union[int, str],
     custompath: Optional[str] = None
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Loads the data necessary for continuation based on timestamp.
-    
+    """Load the saved restart fields for a given timestamp.
+
     Parameters
     ----------
     timestamp : str or int
-        timestamp used for naming saved files
+        Timestamp token used in the saved field filenames.
     custompath : str, optional
-        path to the custom directory, defaults to None. 
-        If None, files will be loaded from the parent_directory/data/
-
+        Base directory containing the saved files. If omitted, fields are loaded
+        from the local ``data/`` directory.
+    
     Returns
     -------
-    eta : array (J, I)
-        absolute vorticity
-    delta : array (J, I)
-        divergence
-    Phi : array (J, I)
-        geopotential
-    U : array (J, I)
-        zonal winds
-    V : array (J, I)
-        meridional winds
+    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Five NumPy arrays ``(eta, delta, Phi, U, V)``, each with shape
+        ``(J, I)`` and representing absolute vorticity, divergence,
+        geopotential, zonal wind, and meridional wind respectively.
     """
     ts = str(timestamp)
     

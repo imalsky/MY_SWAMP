@@ -1,44 +1,33 @@
 # -*- coding: utf-8 -*-
 # ruff: noqa: E741
-"""
-Unit tests for the spectral transform stack.
+"""Unit tests for the spectral transform stack."""
 
-These are adapted from the reference SWAMPE `test_unit.py` to validate that the
-JAX port preserves the spectral/physical transform identities.
-
-Run as a script:
-    python -m my_swamp.test_unit
-
-Or under pytest (recommended):
-    pytest -q
-"""
 from __future__ import annotations
 
 import numpy as np
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
+
 from my_swamp.dtypes import float_dtype
-from my_swamp import spectral_transform as st
 from my_swamp import initial_conditions as ic
+from my_swamp import spectral_transform as st
 from my_swamp import time_stepping as tstep
 
-# These tests are *numerically sensitive* because they exercise chained FFT and
+
+# These tests are numerically sensitive because they exercise chained FFT and
 # Legendre transforms.
-#
-# In float64 mode, we expect near machine-precision agreement.
-# In float32 mode, round-off accumulates and we must use a looser tolerance.
 _X64 = bool(jax.config.read("jax_enable_x64"))
 
 if _X64:
     _ATOL = 1e-10
     _RTOL = 1e-10
 else:
-    # Empirically, the forward+inverse spectral stack is accurate to O(1e-5)
-    # absolute / O(1e-4) relative in float32 on CPU.
     _ATOL = 1e-4
     _RTOL = 2e-4
 
+
 def test_init() -> None:
+    """Verify the resolution lookup for the T42 spectral setup."""
     N, I, J, _dt, _lambdas, _mus, _w = ic.spectral_params(42)
     assert N == 42, "N should be 42"
     assert I == 128, "I should be 128"
@@ -46,6 +35,7 @@ def test_init() -> None:
 
 
 def test_Pmn_Hmn() -> None:
+    """Verify selected normalized Legendre-basis coefficients."""
     M = 42
     N, I, J, _dt, _lambdas, mus, _w = ic.spectral_params(M)
     Pmn, Hmn = st.PmnHmn(J, M, N, mus)
@@ -59,12 +49,12 @@ def test_Pmn_Hmn() -> None:
 
 
 def test_spectral_transform() -> None:
+    """Verify the analytic transform of the Coriolis field."""
     M = 106
     omega = 3.2e-5
     N, I, J, _dt, _lambdas, mus, w = ic.spectral_params(M)
     Pmn, _Hmn = st.PmnHmn(J, M, N, mus)
 
-    # f(j,i) = 2*omega*mu(j) (constant in longitude)
     f = (2.0 * omega) * mus[:, None] * jnp.ones((1, I), dtype=float_dtype())
 
     fm = st.fwd_fft_trunc(f, I, M)
@@ -77,6 +67,7 @@ def test_spectral_transform() -> None:
 
 
 def test_spectral_transform_forward_inverse() -> None:
+    """Verify that forward and inverse transforms recover the wind field."""
     M = 63
     omega = 7.2921159e-5
     a = 6.37122e6
@@ -98,7 +89,6 @@ def test_spectral_transform_forward_inverse() -> None:
     Uicmnew = st.invrs_leg(Uicmn, I, J, M, N, Pmn)
     Uicnew = st.invrs_fft(Uicmnew, I)
 
-    # Physical-space fields are complex from IFFT but should be real to round-off.
     assert np.allclose(
         np.asarray(Uic),
         np.asarray(jnp.real(Uicnew)),
@@ -108,7 +98,7 @@ def test_spectral_transform_forward_inverse() -> None:
 
 
 def test_wind_transform() -> None:
-    # Wind -> (eta,delta) -> wind
+    """Verify the wind inversion from spectral vorticity and divergence."""
     M = 106
     omega = 7.2921159e-5
     a = 6.37122e6
@@ -136,7 +126,7 @@ def test_wind_transform() -> None:
     Um = st.fwd_fft_trunc(U, I, M)
     Vm = st.fwd_fft_trunc(V, I, M)
 
-    etanew, deltanew, etamnnew, deltamnnew = st.diagnostic_eta_delta(
+    _etanew, _deltanew, etamnnew, deltamnnew = st.diagnostic_eta_delta(
         Um, Vm, fmn, I, J, M, N, Pmn, Hmn, w, tstepcoeff, mJarray, dt
     )
 
@@ -147,7 +137,7 @@ def test_wind_transform() -> None:
 
 
 def test_vorticity_divergence_transform() -> None:
-    # (eta,delta) -> wind -> (eta,delta)
+    """Verify the vorticity/divergence diagnostic transform pair."""
     M = 63
     omega = 7.2921159e-5
     a = 6.37122e6
@@ -188,13 +178,3 @@ def test_vorticity_divergence_transform() -> None:
 
     assert np.allclose(np.asarray(etaic0), np.asarray(jnp.real(etanew)), atol=_ATOL, rtol=_RTOL), "eta error too high"
     assert np.allclose(np.asarray(deltaic0), np.asarray(jnp.real(deltanew)), atol=_ATOL, rtol=_RTOL), "delta error too high"
-
-
-if __name__ == "__main__":
-    test_init()
-    test_Pmn_Hmn()
-    test_spectral_transform()
-    test_spectral_transform_forward_inverse()
-    test_wind_transform()
-    test_vorticity_divergence_transform()
-    print("All tests passed!")

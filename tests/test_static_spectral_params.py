@@ -7,6 +7,7 @@ import pytest
 
 @pytest.mark.smoke
 def test_spectral_params_shapes() -> None:
+    """Verify the shapes of the precomputed static spectral arrays."""
     import jax  # noqa: F401  # pylint: disable=unused-import
     from my_swamp import initial_conditions as ic
 

@@ -47,11 +47,30 @@ from . import time_stepping
 
 
 def _is_python_scalar(x: Any) -> bool:
+    """Return is python scalar.
+    
+    Parameters
+    ----------
+    x : Any
+    
+    Returns
+    -------
+    bool
+    """
     return isinstance(x, (int, float, np.floating))
 
 
 def _tree_has_tracer(pytree: Any) -> bool:
-    """Return True if any leaf in `pytree` is a JAX tracer."""
+    """Return True if any leaf in `pytree` is a JAX tracer.
+    
+    Parameters
+    ----------
+    pytree : Any
+    
+    Returns
+    -------
+    bool
+    """
     for leaf in jax.tree_util.tree_leaves(pytree):
         if isinstance(leaf, jax.core.Tracer):
             return True
@@ -65,9 +84,16 @@ def _cached_geometry(M: int):
     This avoids repeated SciPy / NumPy work inside `st.PmnHmn`, which is costly
     in optimization loops where only a handful of scalar parameters change.
 
+    Parameters
+    ----------
+    M : int
+        Spectral truncation order.
+
     Returns
     -------
-    (N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray)
+    tuple[int, int, int, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Cached grid sizes, longitude/latitude quadrature arrays, Legendre
+        tables, and timestep helper arrays derived from ``M``.
     """
 
     N, I, J, _, lambdas, mus, w = initial_conditions.spectral_params(int(M))
@@ -79,9 +105,24 @@ def _cached_geometry(M: int):
 
 @lru_cache(maxsize=None)
 def _get_simulate_scan_jit(*, test: Optional[int], donate_state: bool):
-    """Get a cached jitted wrapper around `simulate_scan` for the given mode."""
+    """Get a cached jitted wrapper around `simulate_scan` for the given mode.
+    
+    Parameters
+    ----------
+    test : Optional[int]
+        Static test-case selector forwarded into :func:`simulate_scan`.
+    donate_state : bool
+        Whether to donate the initial state buffer to the compiled JAX function.
+    
+    Returns
+    -------
+    Any
+        Cached jitted callable wrapping :func:`simulate_scan` for the given
+        static configuration.
+    """
 
     def _fn(state0: State, t_seq: jnp.ndarray, static: Static, flags: RunFlags, Uic: jnp.ndarray, Vic: jnp.ndarray):
+        """Run the cached scan kernel with captured static configuration."""
         return simulate_scan(static=static, flags=flags, state0=state0, t_seq=t_seq, test=test, Uic=Uic, Vic=Vic)
 
     return jax.jit(_fn, donate_argnums=(0,) if donate_state else ())
@@ -89,7 +130,23 @@ def _get_simulate_scan_jit(*, test: Optional[int], donate_state: bool):
 
 @lru_cache(maxsize=None)
 def _get_simulate_scan_last_jit(*, test: Optional[int], donate_state: bool, remat_step: bool):
-    """Get a cached jitted wrapper around `simulate_scan_last` for the given mode."""
+    """Get a cached jitted wrapper around `simulate_scan_last` for the given mode.
+    
+    Parameters
+    ----------
+    test : Optional[int]
+        Static test-case selector forwarded into :func:`simulate_scan_last`.
+    donate_state : bool
+        Whether to donate the initial state buffer to the compiled JAX function.
+    remat_step : bool
+        Whether to checkpoint each per-step update inside the scan.
+    
+    Returns
+    -------
+    Any
+        Cached jitted callable wrapping :func:`simulate_scan_last` for the
+        requested static configuration.
+    """
 
     def _fn(
         state0: State,
@@ -99,6 +156,7 @@ def _get_simulate_scan_last_jit(*, test: Optional[int], donate_state: bool, rema
         Uic: jnp.ndarray,
         Vic: jnp.ndarray,
     ) -> State:
+        """Run the cached state-only scan kernel with captured static configuration."""
         return simulate_scan_last(
             static=static,
             flags=flags,
@@ -116,6 +174,14 @@ def _get_simulate_scan_last_jit(*, test: Optional[int], donate_state: bool, rema
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class RunFlags:
+    """Immutable runtime switches for forcing, diffusion, and diagnostics.
+
+    This dataclass stores scalar configuration values that control optional
+    model branches during a run. Boolean fields toggle major numerical paths,
+    while `alpha` and `blowup_rms` are scalar floating-point thresholds used by
+    the stepper and diagnostics logic.
+    """
+
     forcflag: bool = True
     diffflag: bool = True
     expflag: bool = False
@@ -126,6 +192,13 @@ class RunFlags:
 
 
     def tree_flatten(self):
+        """Return tree flatten.
+        
+        
+        Returns
+        -------
+        Any
+        """
         children = (
             jnp.asarray(self.alpha, dtype=float_dtype()),
             jnp.asarray(self.blowup_rms, dtype=float_dtype()),
@@ -135,6 +208,7 @@ class RunFlags:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Reconstruct :class:`RunFlags` from JAX pytree children and metadata."""
         forcflag, diffflag, expflag, modalflag, diagnostics = aux_data
         alpha, blowup_rms = children
         return cls(
@@ -150,6 +224,15 @@ class RunFlags:
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class Static:
+    """Frozen container for geometry, operators, and static physical constants.
+
+    The fields hold integer spectral/grid sizes plus JAX arrays containing
+    timestep scalars, planetary constants, Gaussian-grid geometry, Legendre
+    tables, forcing coefficients, and diffusion operators. Instances are
+    treated as JAX PyTrees so the static numerical context can flow through
+    compiled simulation functions without rebuilding these tensors each step.
+    """
+
     M: int
     N: int
     I: int
@@ -188,6 +271,13 @@ class Static:
 
 
     def tree_flatten(self):
+        """Return tree flatten.
+        
+        
+        Returns
+        -------
+        Any
+        """
         children = (
             self.dt,
             self.a,
@@ -219,6 +309,7 @@ class Static:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Reconstruct :class:`Static` from JAX pytree children and metadata."""
         M, N, I, J = aux_data
         (
             dt,
@@ -319,14 +410,32 @@ class State(NamedTuple):
 
 def _dedupe_state_for_donation(state: State) -> State:
     """Clone aliased array leaves so JAX buffer donation can succeed.
-
+    
     JAX donation rejects pytrees that contain the same underlying array object
     in multiple leaf positions. Our two-level initialization intentionally
     starts with prev==curr values, which can alias at the object level.
+    
+    Parameters
+    ----------
+    state : State
+    
+    Returns
+    -------
+    State
     """
     seen_ids: set[int] = set()
 
     def _dedupe_leaf(x: Any) -> Any:
+        """Return dedupe leaf.
+        
+        Parameters
+        ----------
+        x : Any
+        
+        Returns
+        -------
+        Any
+        """
         if isinstance(x, jax.Array):
             obj_id = id(x)
             if obj_id in seen_ids:
@@ -352,7 +461,27 @@ def build_static(
     K6Phi: Optional[Any],
     test: Optional[int],
 ) -> Static:
-    """Build time-invariant arrays (quadrature, basis, diffusion, coefficients)."""
+    """Build time-invariant arrays (quadrature, basis, diffusion, coefficients).
+    
+    Parameters
+    ----------
+    M : int
+    dt : Any
+    a : Any
+    omega : Any
+    g : Any
+    Phibar : Any
+    taurad : Any
+    taudrag : Any
+    DPhieq : Any
+    K6 : Any
+    K6Phi : Optional[Any]
+    test : Optional[int]
+    
+    Returns
+    -------
+    Static
+    """
 
     N, I, J, lambdas, mus, w, Pmn, Hmn, marray, mJarray, narray = _cached_geometry(int(M))
     Pmnw = st.weighted_legendre_basis(Pmn, w)
@@ -425,7 +554,21 @@ def _forcing_phys(
     U: jnp.ndarray,
     V: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Return (PhiF, F, G) in physical space for the current state."""
+    """Return (PhiF, F, G) in physical space for the current state.
+    
+    Parameters
+    ----------
+    static : Static
+    flags : RunFlags
+    test : Optional[int]
+    Phi : jnp.ndarray
+    U : jnp.ndarray
+    V : jnp.ndarray
+    
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    """
 
     if (test is None) and flags.forcflag:
         Q = forcing.Qfun(static.Phieq, Phi, static.Phibar, static.taurad)
@@ -446,7 +589,20 @@ def _nonlinear_spectral(
     U: jnp.ndarray,
     V: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute (Am,Bm,Cm,Dm,Em) Fourier coefficients for nonlinear terms."""
+    """Compute (Am,Bm,Cm,Dm,Em) Fourier coefficients for nonlinear terms.
+    
+    Parameters
+    ----------
+    static : Static
+    eta : jnp.ndarray
+    Phi : jnp.ndarray
+    U : jnp.ndarray
+    V : jnp.ndarray
+    
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    """
 
     # Match the reference SWAMPE ordering and semantics:
     #   ABCDE_init(U, V, eta, Phi, mus, I, J)
@@ -474,7 +630,23 @@ def _init_state_from_fields(
     U0: jnp.ndarray,
     V0: jnp.ndarray,
 ) -> State:
-    """Initialize the scan state with 2-level start (prev==curr==initial)."""
+    """Initialize the scan state with 2-level start (prev==curr==initial).
+    
+    Parameters
+    ----------
+    static : Static
+    flags : RunFlags
+    test : Optional[int]
+    eta0 : jnp.ndarray
+    delta0 : jnp.ndarray
+    Phi0 : jnp.ndarray
+    U0 : jnp.ndarray
+    V0 : jnp.ndarray
+    
+    Returns
+    -------
+    State
+    """
 
     # Forcing at initial step.
     PhiF0, F0, G0 = _forcing_phys(static=static, flags=flags, test=test, Phi=Phi0, U=U0, V=V0)
@@ -528,7 +700,33 @@ def _step_once(
     Uic: jnp.ndarray,
     Vic: jnp.ndarray,
 ) -> Tuple[State, Dict[str, Any]]:
-    """Single leapfrog update. Returns (new_state, outputs)."""
+    """Single leapfrog update. Returns (new_state, outputs).
+
+    Parameters
+    ----------
+    state : State
+        Current two-level model state.
+    t : jnp.ndarray
+        Current integer timestep index.
+    static : Static
+        Cached geometry and constant model coefficients.
+    flags : RunFlags
+        Runtime switches that control forcing, diffusion, and diagnostics.
+    test : Optional[int]
+        Idealized test selector or ``None`` for forced mode.
+    Uic : jnp.ndarray
+        Initial zonal wind field with shape ``(J, I)`` used by test-case
+        parity branches.
+    Vic : jnp.ndarray
+        Initial meridional wind field with shape ``(J, I)`` used by test-case
+        parity branches.
+
+    Returns
+    -------
+    Tuple[State, Dict[str, Any]]
+        Updated state plus the per-step diagnostics/output dictionary emitted by
+        the scan driver.
+    """
 
     I, J, M, N = static.I, static.J, static.M, static.N
 
@@ -546,6 +744,17 @@ def _step_once(
         dead_next = state.dead
 
     def skip_update(_: Any) -> Tuple[State, Dict[str, Any]]:
+        """Return skip update.
+        
+        Parameters
+        ----------
+        _ : Any
+            Unused operand required by the surrounding call signature.
+        
+        Returns
+        -------
+        Tuple[State, Dict[str, Any]]
+        """
         out = dict(
             t=t,
             dead=dead_next,
@@ -564,6 +773,17 @@ def _step_once(
         return state._replace(dead=dead_next), out
 
     def do_update(_: Any) -> Tuple[State, Dict[str, Any]]:
+        """Return do update.
+        
+        Parameters
+        ----------
+        _ : Any
+            Unused operand required by the surrounding call signature.
+        
+        Returns
+        -------
+        Tuple[State, Dict[str, Any]]
+        """
         # Core time stepping (returns physical-space fields + spectral eta/delta/Phi)
         newetamn, neweta, newetam, newdeltamn, newdelta, newdeltam, newPhimn, newPhi, newPhim, newU, newV, newUm, newVm = time_stepping.tstepping(
             state.etam_prev,
@@ -632,12 +852,34 @@ def _step_once(
         alpha = jnp.asarray(flags.alpha, dtype=float_dtype())
 
         def apply_ra(_: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            """Return apply ra.
+            
+            Parameters
+            ----------
+            _ : Any
+                Unused operand required by the surrounding call signature.
+            
+            Returns
+            -------
+            Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+            """
             eta_mid = state.eta_curr + alpha * (state.eta_prev - 2.0 * state.eta_curr + neweta)
             delta_mid = state.delta_curr + alpha * (state.delta_prev - 2.0 * state.delta_curr + newdelta)
             Phi_mid = state.Phi_curr + alpha * (state.Phi_prev - 2.0 * state.Phi_curr + newPhi)
             return eta_mid, delta_mid, Phi_mid
 
         def no_ra(_: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            """Return no ra.
+            
+            Parameters
+            ----------
+            _ : Any
+                Unused operand required by the surrounding call signature.
+            
+            Returns
+            -------
+            Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+            """
             return state.eta_curr, state.delta_curr, state.Phi_curr
 
         eta_mid, delta_mid, Phi_mid = jax.lax.cond(do_ra, apply_ra, no_ra, operand=None)
@@ -725,18 +967,32 @@ def _step_once_state_only(
     Vic: jnp.ndarray,
 ) -> State:
     """Single leapfrog update returning only the new `State` (no per-step outputs).
-
+    
     This wrapper exists to support highly efficient forward simulations in
     optimization/inference loops where you do not need the per-step `outs`
     dictionary. It enables `simulate_scan_last` (and user-written `fori_loop`
     forward passes) to call a step function whose only output is the new carry.
-
+    
     Notes
     -----
     - When used under `jax.jit`, JAX/XLA will eliminate computations that only
       contribute to the discarded outputs of `_step_once`.
     - For maximum performance in training/inference, set `flags.diagnostics=False`
       to skip global reductions and the blow-up gating branch.
+    
+    Parameters
+    ----------
+    state : State
+    t : jnp.ndarray
+    static : Static
+    flags : RunFlags
+    test : Optional[int]
+    Uic : jnp.ndarray
+    Vic : jnp.ndarray
+    
+    Returns
+    -------
+    State
     """
     new_state, _ = _step_once(state, t, static, flags, test, Uic, Vic)
     return new_state
@@ -751,9 +1007,34 @@ def simulate_scan(
     Uic: jnp.ndarray,
     Vic: jnp.ndarray,
 ) -> Tuple[State, Dict[str, Any]]:
-    """Pure differentiable core: advance along `t_seq` with `lax.scan`."""
+    """Pure differentiable core: advance along `t_seq` with `lax.scan`.
+    
+    Parameters
+    ----------
+    static : Static
+        Static geometry, precomputed transforms, and forcing coefficients.
+    flags : RunFlags
+        Boolean runtime switches and scalar thresholds controlling the solver.
+    state0 : State
+        Initial model state at the start of the scan.
+    t_seq : jnp.ndarray
+        One-dimensional sequence of timestep indices.
+    test : Optional[int]
+        Test selector forwarded into the timestep kernel.
+    Uic : jnp.ndarray
+        Initial zonal wind field used by the diagnostic updates.
+    Vic : jnp.ndarray
+        Initial meridional wind field used by the diagnostic updates.
+    
+    Returns
+    -------
+    Tuple[State, Dict[str, Any]]
+        Final state together with stacked per-step diagnostics produced by
+        :func:`_step_once`.
+    """
 
     def step(carry: State, t: jnp.ndarray):
+        """Advance one scan step and emit the recorded diagnostics."""
         return _step_once(carry, t, static, flags, test, Uic, Vic)
 
     last_state, outs = jax.lax.scan(step, state0, t_seq)
@@ -772,16 +1053,41 @@ def simulate_scan_last(
     remat_step: bool = False,
 ) -> State:
     """Advance along `t_seq` but do NOT materialize a time history.
-
+    
     This is the preferred core for optimization/inference where you only need the
     final state (e.g., the terminal `Phi_curr`) and a scalar loss.
-
+    
     Notes
     -----
     - Returning an empty scan output prevents JAX from stacking ~10k copies of
       large 2-D fields.
     - When `remat_step=True`, the per-step computation is rematerialized
       (checkpointed) to trade compute for memory (mostly useful for reverse-mode).
+    
+    Parameters
+    ----------
+    static : Static
+        Static geometry, precomputed transforms, and forcing coefficients.
+    flags : RunFlags
+        Boolean runtime switches and scalar thresholds controlling the solver.
+    state0 : State
+        Initial model state at the start of the scan.
+    t_seq : jnp.ndarray
+        One-dimensional sequence of timestep indices.
+    test : Optional[int]
+        Test selector forwarded into the timestep kernel.
+    Uic : jnp.ndarray
+        Initial zonal wind field used by the diagnostic updates.
+    Vic : jnp.ndarray
+        Initial meridional wind field used by the diagnostic updates.
+    remat_step : bool
+        If ``True``, rematerialize the per-step update during reverse-mode
+        differentiation to reduce peak memory use.
+    
+    Returns
+    -------
+    State
+        Final solver state after consuming the full timestep sequence.
     """
 
     step_core = _step_once_state_only
@@ -791,6 +1097,7 @@ def simulate_scan_last(
         step_core = jax.checkpoint(_step_once_state_only, static_argnums=(4,))
 
     def step(carry: State, t: jnp.ndarray):
+        """Advance one scan step without materializing per-step outputs."""
         new_state = step_core(carry, t, static, flags, test, Uic, Vic)
         return new_state, ()
 
@@ -843,14 +1150,85 @@ def run_model_scan(
 
     Parameters
     ----------
-    eta0_init, delta0_init, Phi0_init : optional
-        If provided (all three), these arrays (J, I) override the built-in
-        analytic initialization and the continuation loader. This is the
-        preferred way to make the simulation differentiable with respect to
-        the initial conditions.
-    U0_init, V0_init : optional
-        If not provided but eta/delta are provided, winds are diagnosed from
-        eta/delta via spectral inversion (matching SWAMPE continuation logic).
+    M : int
+        Spectral truncation with ``N=M``.
+    dt : Any
+        Float-like timestep in seconds. Concrete Python scalars are validated to
+        be positive.
+    tmax : int
+        Final timestep index. The scan advances over ``arange(starttime, tmax)``.
+    Phibar : Any
+        Reference geopotential scalar.
+    omega : Any
+        Planetary rotation rate in radians per second.
+    a : Any
+        Planetary radius in meters.
+    test : Optional[int]
+        Idealized test selector or ``None`` for forced mode.
+    g : Any
+        Surface gravity scalar.
+    forcflag : bool
+        Enables thermal forcing.
+    taurad : Any
+        Radiative relaxation timescale in seconds.
+    taudrag : Any
+        Drag timescale in seconds.
+    DPhieq : Any
+        Day-night equilibrium geopotential contrast.
+    a1 : Any
+        Tilt angle used by the analytic test initial conditions.
+    diffflag : bool
+        Enables diffusion filtering.
+    modalflag : bool
+        Enables the modal/Robert-Asselin correction branch.
+    alpha : Any
+        Robert-Asselin filter coefficient.
+    expflag : bool
+        Selects the explicit timestepper when true and the modified-Euler
+        scheme otherwise.
+    K6 : Any
+        Sixth-order diffusion coefficient for vorticity and divergence.
+    K6Phi : Optional[Any]
+        Optional sixth-order diffusion coefficient for geopotential.
+    contflag : bool
+        Enables continuation from saved disk state.
+    custompath : Optional[str]
+        Optional directory used for continuation loads.
+    contTime : Optional[str]
+        Continuation timestamp token or numeric string.
+    timeunits : str
+        Units used to interpret ``contTime`` when deriving ``starttime``.
+    starttime : Optional[int]
+        Explicit start index override. If omitted, the continuation timestamp or
+        default startup index is used.
+    eta0_init : Optional[jnp.ndarray]
+        Optional physical-space absolute-vorticity field with shape ``(J, I)``.
+    delta0_init : Optional[jnp.ndarray]
+        Optional physical-space divergence field with shape ``(J, I)``.
+    Phi0_init : Optional[jnp.ndarray]
+        Optional physical-space geopotential field with shape ``(J, I)``.
+    U0_init : Optional[jnp.ndarray]
+        Optional physical-space zonal wind field with shape ``(J, I)``.
+    V0_init : Optional[jnp.ndarray]
+        Optional physical-space meridional wind field with shape ``(J, I)``.
+    diagnostics : bool
+        Enables RMS-wind diagnostics and blow-up gating during the scan.
+    return_history : bool
+        When true, return the full scan outputs; otherwise return only the
+        terminal state payload.
+    remat_step : bool
+        Enables rematerialization of the per-step function to reduce memory.
+    jit_scan : bool
+        Wraps the scan in a cached `jax.jit` specialization when true.
+    donate_state : bool
+        Allows JAX to donate the initial state buffers to the compiled scan.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Simulation payload containing the static setup, timestep sequence, and
+        either the full output history or the terminal state depending on
+        ``return_history``.
     """
 
     if tmax < 2:
@@ -1021,6 +1399,16 @@ def run_model_scan(
         cont_fallback = str(contTime)
 
         def _read_with_fallback(prefix: str):
+            """Read read with fallback.
+            
+            Parameters
+            ----------
+            prefix : str
+            
+            Returns
+            -------
+            Any
+            """
             try:
                 return continuation.read_pickle(f"{prefix}-{cont_key}", custompath=custompath)
             except FileNotFoundError:
@@ -1169,14 +1557,54 @@ def run_model_scan_final(
     donate_state: bool = False,
 ) -> Dict[str, Any]:
     """Run the model but return only the terminal state (no time history).
-
+    
     This is the recommended entrypoint for optimization/inference and forward-mode
     autodiff (JVP/Jacobian-vector products), where you typically need only the
     final `Phi_curr` (temperature map) and a scalar loss.
-
+    
     See also
     --------
     run_model_scan : full-history scan (plotting / diagnostics)
+    
+    Parameters
+    ----------
+    M : int
+    dt : Any
+    tmax : int
+    Phibar : Any
+    omega : Any
+    a : Any
+    test : Optional[int]
+    g : Any
+    forcflag : bool
+    taurad : Any
+    taudrag : Any
+    DPhieq : Any
+    a1 : Any
+    diffflag : bool
+    modalflag : bool
+    alpha : Any
+    expflag : bool
+    K6 : Any
+    K6Phi : Optional[Any]
+    contflag : bool
+    custompath : Optional[str]
+    contTime : Optional[str]
+    timeunits : str
+    starttime : Optional[int]
+    eta0_init : Optional[jnp.ndarray]
+    delta0_init : Optional[jnp.ndarray]
+    Phi0_init : Optional[jnp.ndarray]
+    U0_init : Optional[jnp.ndarray]
+    V0_init : Optional[jnp.ndarray]
+    diagnostics : bool
+    remat_step : bool
+    jit_scan : bool
+    donate_state : bool
+    
+    Returns
+    -------
+    Dict[str, Any]
     """
 
     return run_model_scan(
@@ -1254,11 +1682,50 @@ def run_model(
     as_numpy: bool = True,
 ) -> Dict[str, Any]:
     """Compatibility wrapper matching the original SWAMPE `model.run_model` signature.
-
+    
     Notes
     -----
     - The differentiable core is `run_model_scan(...)`.
     - Plotting/saving are done after the scan (no side effects in the core).
+    
+    Parameters
+    ----------
+    M : int
+    dt : float
+    tmax : int
+    Phibar : float
+    omega : float
+    a : float
+    test : Optional[int]
+    g : float
+    forcflag : bool
+    taurad : float
+    taudrag : float
+    DPhieq : float
+    a1 : float
+    plotflag : bool
+    plotfreq : int
+    minlevel : Optional[float]
+    maxlevel : Optional[float]
+    diffflag : bool
+    modalflag : bool
+    alpha : float
+    contflag : bool
+    saveflag : bool
+    expflag : bool
+    savefreq : int
+    K6 : float
+    custompath : Optional[str]
+    contTime : Optional[str]
+    timeunits : str
+    verbose : bool
+    K6Phi : Optional[float]
+    jit_scan : bool
+    as_numpy : bool
+    
+    Returns
+    -------
+    Dict[str, Any]
     """
 
     result = run_model_scan(
@@ -1468,16 +1935,27 @@ def run_model(
 
 def run_model_gpu(*args, **kwargs) -> Dict[str, Any]:
     """GPU/AD-friendly wrapper around :func:`run_model`.
-
+    
     This preserves the legacy default behavior of :func:`run_model` (plotting,
     saving, and host materialization) while providing a convenience entrypoint
     with performance-oriented defaults.
-
+    
     Defaults applied when not explicitly provided by the caller:
       - plotflag=False
       - saveflag=False
       - as_numpy=False
       - jit_scan=True
+    
+    Parameters
+    ----------
+    *args : Any
+        Positional arguments forwarded to the wrapped callable.
+    **kwargs : Any
+        Keyword arguments forwarded to the wrapped callable.
+    
+    Returns
+    -------
+    Dict[str, Any]
     """
     kwargs = dict(kwargs)
     kwargs.setdefault("plotflag", False)

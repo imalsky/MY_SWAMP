@@ -21,10 +21,12 @@ OUT_DIR = ROOT / "tests" / "fixtures"
 
 
 def _ensure_lpmn_compat() -> None:
+    """Install a compatibility shim for `scipy.special.lpmn` when SciPy lacks it."""
     if hasattr(sp, "lpmn"):
         return
 
     def _lpmn_compat(M: int, N: int, x: float):
+        """Compatibility shim for `scipy.special.lpmn`."""
         M = int(M)
         N = int(N)
         P = np.zeros((M + 1, N + 1), dtype=np.float64)
@@ -58,6 +60,7 @@ def _ensure_lpmn_compat() -> None:
 
 
 def _phase_curve_from_phi(phi: np.ndarray, n_phase: int = 64) -> Tuple[np.ndarray, np.ndarray]:
+    """Advance phase curve from phi."""
     J, I = phi.shape
     lambdas = np.linspace(-np.pi, np.pi, I, endpoint=False)[None, :]
     mus = np.polynomial.legendre.leggauss(J)[0][:, None]
@@ -76,6 +79,7 @@ def _phase_curve_from_phi(phi: np.ndarray, n_phase: int = 64) -> Tuple[np.ndarra
 
 
 def _read_fields(ref_cont, path: str, step: int, dt: float) -> Dict[str, np.ndarray]:
+    """Load saved restart fields for one timestep and derive diagnostics."""
     ts = str(int(dt * step))
     return {
         "eta": np.asarray(ref_cont.read_pickle(f"eta-{ts}", custompath=path), dtype=np.float64),
@@ -87,6 +91,7 @@ def _read_fields(ref_cont, path: str, step: int, dt: float) -> Dict[str, np.ndar
 
 
 def _save_case(case_name: str, kwargs: Dict[str, float], snapshot_steps: Iterable[int]) -> None:
+    """Write one compressed parity fixture archive."""
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
     Path("/tmp/mpl").mkdir(parents=True, exist_ok=True)
 
@@ -149,6 +154,7 @@ def _save_case(case_name: str, kwargs: Dict[str, float], snapshot_steps: Iterabl
 
 
 def main() -> None:
+    """Generate compressed reference fixtures for the parity regression tests."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     _save_case(

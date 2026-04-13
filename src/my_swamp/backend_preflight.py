@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Tuple
 
 import jax
 
@@ -13,6 +13,8 @@ _VALID_BACKENDS = ("cpu", "gpu", "tpu")
 
 @dataclass(frozen=True)
 class BackendInfo:
+    """Summary of the JAX backend state observed during preflight checks."""
+
     requested_backend: Optional[str]
     default_backend: str
     available_backends: Tuple[str, ...]
@@ -21,11 +23,14 @@ class BackendInfo:
 
     @property
     def device_count(self) -> int:
+        """Return the number of visible devices in the selected backend view."""
         return len(self.device_names)
 
 
 def _available_backends() -> Tuple[str, ...]:
-    out = []
+    """Return the subset of known JAX backends that currently expose devices."""
+
+    out: list[str] = []
     for backend in _VALID_BACKENDS:
         try:
             if len(jax.devices(backend)) > 0:
@@ -37,12 +42,26 @@ def _available_backends() -> Tuple[str, ...]:
 
 def preflight_backend(requested_backend: Optional[str] = None, *, require_gpu: bool = False) -> BackendInfo:
     """Validate backend/device availability and return a summary.
-
+    
     Raises
     ------
     RuntimeError
         If a requested backend is unavailable, no devices are visible, or
         ``require_gpu=True`` without a visible GPU backend.
+    
+    Parameters
+    ----------
+    requested_backend : Optional[str]
+        Explicit backend to validate. ``None`` checks the default JAX device
+        view.
+    require_gpu : bool
+        If ``True``, raise an error unless a GPU backend is visible.
+    
+    Returns
+    -------
+    BackendInfo
+        Summary of the requested/default backend, visible devices, and device
+        platforms.
     """
     requested = None if requested_backend is None else str(requested_backend).strip().lower()
     if requested in {"", "none"}:
@@ -84,8 +103,19 @@ def preflight_backend(requested_backend: Optional[str] = None, *, require_gpu: b
     )
 
 
-def backend_info_lines(info: BackendInfo) -> Sequence[str]:
-    """Format backend summary for logs/CLI output."""
+def backend_info_lines(info: BackendInfo) -> Tuple[str, ...]:
+    """Format backend summary for logs/CLI output.
+    
+    Parameters
+    ----------
+    info : BackendInfo
+        Backend summary returned by :func:`preflight_backend`.
+    
+    Returns
+    -------
+    Tuple[str, ...]
+        Log-friendly key/value lines describing the resolved backend state.
+    """
     return (
         f"requested_backend={info.requested_backend}",
         f"default_backend={info.default_backend}",

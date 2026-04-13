@@ -34,19 +34,20 @@ def fwd_grad(
 
     Parameters
     ----------
-    loss_fn:
-        Function mapping ``theta -> scalar loss``.
-    theta:
-        1-D parameter vector.
-    chunk:
-        If ``None`` (default), compute the full gradient with ``jax.jacfwd``.
-        If an integer, compute the gradient in batches of that many tangent
-        directions using JVPs to reduce peak memory.
+    loss_fn : Callable[[jnp.ndarray], jnp.ndarray]
+        Callable that maps a one-dimensional parameter vector to a scalar JAX
+        loss value.
+    theta : jnp.ndarray
+        One-dimensional parameter vector of shape ``(p,)``.
+    chunk : Optional[int]
+        Optional batch size for tangent directions. ``None`` uses
+        ``jax.jacfwd`` on the full vector, while a positive integer uses
+        chunked JVP batches to reduce peak memory.
 
     Returns
     -------
-    grad:
-        1-D array with the same length as ``theta``.
+    jnp.ndarray
+        Gradient vector with the same shape and dtype family as ``theta``.
 
     Notes
     -----
@@ -76,6 +77,16 @@ def fwd_grad(
     eye = jnp.eye(p, dtype=theta.dtype)
 
     def one_dir(v: jnp.ndarray) -> jnp.ndarray:
+        """Return one dir.
+        
+        Parameters
+        ----------
+        v : jnp.ndarray
+        
+        Returns
+        -------
+        jnp.ndarray
+        """
         _, dl = jax.jvp(loss_fn, (theta,), (v,))
         return dl
 

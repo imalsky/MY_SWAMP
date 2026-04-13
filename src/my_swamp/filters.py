@@ -9,22 +9,41 @@ from .dtypes import float_dtype
 
 
 def diffusion(Ximn: jnp.ndarray, sigma: jnp.ndarray) -> jnp.ndarray:
-    """
-    Applies the diffusion filter described in Gelb and Gleeson (eq. 12).
-    
-    Ximn: spectral coefficients, shape (M+1, N+1)
-    sigma: filter coefficients, shape (M+1, N+1)
-    Returns: filtered spectral coefficients
+    """Applies the diffusion filter described in Gelb and Gleeson (eq. 12).
+
+    Parameters
+    ----------
+    Ximn : jnp.ndarray
+        Spectral coefficients with shape ``(M+1, N+1)``.
+    sigma : jnp.ndarray
+        Diffusion coefficients with shape ``(M+1, N+1)``.
+
+    Returns
+    -------
+    jnp.ndarray
+        Filtered spectral coefficients with the same shape and dtype as
+        ``Ximn``.
     """
     return Ximn * sigma
 
 
 def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
-    """
-    Computes the coefficient for the fourth degree diffusion filter 
+    """Computes the coefficient for the fourth degree diffusion filter 
     described in Gelb and Gleeson (eq. 12) for vorticity and divergence.
     
     CORRECTED: Uses original implicit filter formulation.
+    
+    Parameters
+    ----------
+    M : int
+    N : int
+    K4 : float
+    a : float
+    dt : float
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     nvec = jnp.arange(N + 1, dtype=float_dtype())
     ncoeff = (nvec * nvec / a**2) * ((nvec + 1) * (nvec + 1) / a**2)
@@ -38,11 +57,22 @@ def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
 
 
 def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
-    """
-    Computes the coefficient for the fourth degree diffusion filter 
+    """Computes the coefficient for the fourth degree diffusion filter 
     described in Gelb and Gleeson (eq. 12) for geopotential.
     
     Uses original implicit filter formulation (no factor1 subtraction).
+    
+    Parameters
+    ----------
+    M : int
+    N : int
+    K4 : float
+    a : float
+    dt : float
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     nvec = jnp.arange(N + 1, dtype=float_dtype())
     ncoeff = (nvec * nvec / a**2) * ((nvec + 1) * (nvec + 1) / a**2)
@@ -55,11 +85,22 @@ def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
 
 
 def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
-    """
-    Computes the coefficient for the sixth degree diffusion filter 
+    """Computes the coefficient for the sixth degree diffusion filter 
     for vorticity and divergence.
     
     Uses original implicit filter formulation.
+    
+    Parameters
+    ----------
+    M : int
+    N : int
+    K6 : float
+    a : float
+    dt : float
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     nvec = jnp.arange(N + 1, dtype=float_dtype())
     
@@ -75,10 +116,21 @@ def sigma6(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
 
 
 def sigma6Phi(M: int, N: int, K6: float, a: float, dt: float) -> jnp.ndarray:
-    """
-    Computes the coefficient for the sixth degree diffusion filter for geopotential.
+    """Computes the coefficient for the sixth degree diffusion filter for geopotential.
     
     Uses original implicit filter formulation (no factor1 subtraction).
+    
+    Parameters
+    ----------
+    M : int
+    N : int
+    K6 : float
+    a : float
+    dt : float
+    
+    Returns
+    -------
+    jnp.ndarray
     """
     nvec = jnp.arange(N + 1, dtype=float_dtype())
     

@@ -16,12 +16,24 @@ from . import spectral_transform as st
 
 
 def test1_init(a: float, omega: float, a1: float) -> Tuple[float, float, float, float, float]:
-    """
-    Initializes the parameters from Test 1 in Williamson et al. (1992),
+    """Initializes the parameters from Test 1 in Williamson et al. (1992),
     Advection of Cosine Bell over the Pole.
 
-    Returns:
-        SU0, sina, cosa, etaamp, Phiamp
+    Parameters
+    ----------
+    a : float
+        Planetary radius in meters.
+    omega : float
+        Rotation rate in radians per second.
+    a1 : float
+        Rotation-axis tilt angle in radians.
+
+    Returns
+    -------
+    Tuple[float, float, float, float, float]
+        Tuple ``(SU0, sina, cosa, etaamp, Phiamp)`` containing the solid-body
+        speed, tilt sine/cosine, and analytic amplitudes used by the Test 1
+        initial conditions.
     """
     a = jnp.asarray(a, dtype=float_dtype())
     omega = jnp.asarray(omega, dtype=float_dtype())
@@ -36,11 +48,20 @@ def test1_init(a: float, omega: float, a1: float) -> Tuple[float, float, float, 
 
 
 def spectral_params(M: int):
-    """
-    Generates the resolution parameters according to Table 1 and 2 from Jakob et al. (1993).
+    """Generates the resolution parameters according to Table 1 and 2 from Jakob et al. (1993).
 
-    Returns:
-        N, I, J, dt, lambdas, mus, w
+    Parameters
+    ----------
+    M : int
+        Spectral truncation order.
+
+    Returns
+    -------
+    Tuple[int, int, int, int, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Tuple ``(N, I, J, dt, lambdas, mus, w)`` giving the triangular
+        truncation, longitude count, Gaussian-latitude count, reference
+        timestep in seconds, longitudes, Gaussian latitudes, and quadrature
+        weights.
     """
     N = int(M)
 
@@ -73,11 +94,30 @@ def state_var_init(
     etaamp: float,
     *args,
 ):
-    """
-    Initializes state variables (eta, delta, Phi) in physical space.
+    """Initializes state variables (eta, delta, Phi) in physical space.
 
-    Returns:
-        etaic0, etaic1, deltaic0, deltaic1, Phiic0, Phiic1
+    Parameters
+    ----------
+    I : int
+        Number of longitude points.
+    J : int
+        Number of Gaussian latitudes.
+    mus : jnp.ndarray
+        Gaussian latitudes with shape ``(J,)``.
+    lambdas : jnp.ndarray
+        Longitudes with shape ``(I,)``.
+    test : Optional[int]
+        Idealized test selector. ``None`` uses the forced-production branch.
+    etaamp : float
+        Vorticity amplitude scalar used by the analytic initial condition.
+    *args : Any
+        Extra scalar parameters required by the Williamson test cases.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        Tuple ``(etaic0, etaic1, deltaic0, deltaic1, Phiic0, Phiic1)`` of
+        physical-space fields, each with shape ``(J, I)``.
     """
     I = int(I)
     J = int(J)
@@ -143,11 +183,32 @@ def velocity_init(
     lambdas: jnp.ndarray,
     test: Optional[int],
 ):
-    """
-    Initializes the wind components U (zonal) and V (meridional) in physical space.
+    """Initializes the wind components U (zonal) and V (meridional) in physical space.
 
-    Returns:
-        Uic, Vic (both shape (J,I))
+    Parameters
+    ----------
+    I : int
+        Number of longitude points.
+    J : int
+        Number of Gaussian latitudes.
+    SU0 : float
+        Solid-body reference wind speed.
+    cosa : float
+        Cosine of the tilt angle.
+    sina : float
+        Sine of the tilt angle.
+    mus : jnp.ndarray
+        Gaussian latitudes with shape ``(J,)``.
+    lambdas : jnp.ndarray
+        Longitudes with shape ``(I,)``.
+    test : Optional[int]
+        Idealized test selector. ``None`` returns zero initial winds.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple ``(Uic, Vic)`` of zonal and meridional winds, each with shape
+        ``(J, I)``.
     """
     I = int(I)
     J = int(J)
@@ -183,10 +244,31 @@ def ABCDE_init(
     I: int,
     J: int,
 ):
-    """
-    Initializes the auxiliary nonlinear components:
-        A=U*eta, B=V*eta, C=U*Phi, D=V*Phi,
-        E=(U^2+V^2)/(2*(1-mu^2)).
+    """Initializes the auxiliary nonlinear products used by the spectral tendencies.
+
+    Computes A=U*eta, B=V*eta, C=U*Phi, D=V*Phi, E=(U^2+V^2)/(2*(1-mu^2)).
+
+    Parameters
+    ----------
+    Uic : jnp.ndarray
+        Initial zonal wind with shape ``(J, I)``.
+    Vic : jnp.ndarray
+        Initial meridional wind with shape ``(J, I)``.
+    etaic0 : jnp.ndarray
+        Initial absolute vorticity with shape ``(J, I)``.
+    Phiic0 : jnp.ndarray
+        Initial geopotential perturbation with shape ``(J, I)``.
+    mus : jnp.ndarray
+        Sine of Gaussian latitudes with shape ``(J,)``.
+    I : int
+        Number of longitude grid points.
+    J : int
+        Number of Gaussian latitude grid points.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        ``(A, B, C, D, E)`` arrays, each with shape ``(J, I)``.
     """
     I = int(I)
     J = int(J)
@@ -204,8 +286,21 @@ def ABCDE_init(
 
 
 def coriolismn(M: int, omega: float) -> jnp.ndarray:
-    """
-    Initializes the Coriolis parameter in spectral space.
+    """Initializes the Coriolis parameter in spectral space.
+    
+    Parameters
+    ----------
+    M : int
+        Spectral truncation order.
+    omega : float
+        Planetary rotation rate in radians per second.
+    
+    Returns
+    -------
+    jnp.ndarray
+        Spectral Coriolis array with shape ``(M+1, M+1)``. Only the
+        ``(m=0, n=1)`` coefficient is non-zero, matching the analytic spherical
+        harmonic representation used by SWAMPE.
     """
     M = int(M)
     omega = jnp.asarray(omega, dtype=float_dtype())

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os as _os
 import importlib as _importlib
+from typing import Any
 
 from ._version import __version__
 
@@ -58,12 +59,10 @@ from . import explicit_tdiff
 from . import modEuler_tdiff
 from . import time_stepping
 from . import model
-from . import main_function
 from . import autodiff_utils
 
 from .model import run_model, run_model_gpu, run_model_scan, run_model_scan_final
 from .autodiff_utils import fwd_grad
-from .main_function import main
 
 
 __all__ = [
@@ -88,17 +87,45 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
-    """Lazy import for heavy optional plotting dependencies.
+def main(*args: Any, **kwargs: Any) -> Any:
+    """Forward to :func:`my_swamp.main_function.main` without eager CLI import.
+    
+    Parameters
+    ----------
+    *args : Any
+    Positional arguments forwarded to the wrapped callable.
+    **kwargs : Any
+    Keyword arguments forwarded to the wrapped callable.
+    
+    Returns
+    -------
+    Any
+    """
 
+    from .main_function import main as _main
+
+    return _main(*args, **kwargs)
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import optional submodules to keep package import side-effect-light.
+    
     Notes
     -----
     Using ``importlib.import_module`` avoids recursion when users do
-    ``from my_swamp import plotting``.
+    ``from my_swamp import plotting`` or ``from my_swamp import main_function``.
+    
+    Parameters
+    ----------
+    name : str
+    
+    Returns
+    -------
+    Any
     """
 
-    if name == "plotting":
-        _plotting = _importlib.import_module(f"{__name__}.plotting")
-        globals()["plotting"] = _plotting
-        return _plotting
+    if name in {"plotting", "main_function"}:
+        module = _importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = module
+        return module
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

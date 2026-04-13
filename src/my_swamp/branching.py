@@ -13,7 +13,16 @@ T = TypeVar("T")
 
 
 def static_bool(pred: Any) -> Optional[bool]:
-    """Return a Python bool when `pred` is statically known, else None."""
+    """Return a Python bool when `pred` is statically known, else None.
+    
+    Parameters
+    ----------
+    pred : Any
+    
+    Returns
+    -------
+    Optional[bool]
+    """
     if isinstance(pred, (bool, np.bool_, int, np.integer)):
         return bool(pred)
 
@@ -28,7 +37,19 @@ def static_bool(pred: Any) -> Optional[bool]:
 
 
 def cond(pred: Any, true_fun: Callable[[Any], T], false_fun: Callable[[Any], T], operand: Any) -> T:
-    """Like `jax.lax.cond`, but uses a Python branch when possible."""
+    """Like `jax.lax.cond`, but uses a Python branch when possible.
+    
+    Parameters
+    ----------
+    pred : Any
+    true_fun : Callable[[Any], T]
+    false_fun : Callable[[Any], T]
+    operand : Any
+    
+    Returns
+    -------
+    T
+    """
     b = static_bool(pred)
     if b is not None:
         return true_fun(operand) if b else false_fun(operand)
@@ -36,7 +57,18 @@ def cond(pred: Any, true_fun: Callable[[Any], T], false_fun: Callable[[Any], T],
 
 
 def select(pred: Any, on_true: T, on_false: T) -> T:
-    """Like `jax.lax.select`, but uses a Python branch when possible."""
+    """Like `jax.lax.select`, but uses a Python branch when possible.
+    
+    Parameters
+    ----------
+    pred : Any
+    on_true : T
+    on_false : T
+    
+    Returns
+    -------
+    T
+    """
     b = static_bool(pred)
     if b is not None:
         return on_true if b else on_false
@@ -44,7 +76,18 @@ def select(pred: Any, on_true: T, on_false: T) -> T:
 
 
 def maybe_apply(pred: Any, fn: Callable[[T], T], value: T) -> T:
-    """Apply fn(value) if pred is true; preserve JAX-traceability if dynamic."""
+    """Apply fn(value) if pred is true; preserve JAX-traceability if dynamic.
+    
+    Parameters
+    ----------
+    pred : Any
+    fn : Callable[[T], T]
+    value : T
+    
+    Returns
+    -------
+    T
+    """
     b = static_bool(pred)
     if b is True:
         return fn(value)

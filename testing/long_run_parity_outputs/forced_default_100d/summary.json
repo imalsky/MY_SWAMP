@@ -1,0 +1,85 @@
+{
+  "comparison": "SWAMPE vs MY_SWAMP long-run terminal parity",
+  "days_actual": 50.0,
+  "days_requested": 50.0,
+  "dt_seconds": 1200.0,
+  "final_step": 3600,
+  "metrics": {
+    "Phi": {
+      "max_abs_error": 6.497430149465799e-09,
+      "max_fractional_error": 4.283204336906399e-11,
+      "mean_abs_error": 1.5922779466465142e-09,
+      "mean_fractional_error": 7.704723797937823e-13,
+      "ref_max_abs": 889166.673510903,
+      "relative_l2_error": 5.8116634851423906e-15,
+      "rms_abs_error": 1.9657643761579505e-09,
+      "rms_fractional_error": 2.9241353658729508e-12
+    },
+    "U": {
+      "max_abs_error": 5.314859663485549e-12,
+      "max_fractional_error": 3.112021082308243e-09,
+      "mean_abs_error": 1.8507005042023223e-12,
+      "mean_fractional_error": 7.527297109598251e-12,
+      "ref_max_abs": 205.8735020121298,
+      "relative_l2_error": 3.708257014415489e-14,
+      "rms_abs_error": 2.3102801178565888e-12,
+      "rms_fractional_error": 7.125843978990491e-11
+    },
+    "V": {
+      "max_abs_error": 4.0702580195173255e-12,
+      "max_fractional_error": 3.954355990303226e-08,
+      "mean_abs_error": 9.43267719214987e-13,
+      "mean_fractional_error": 2.483394944821996e-11,
+      "ref_max_abs": 102.34702984672377,
+      "relative_l2_error": 3.4221968168478094e-14,
+      "rms_abs_error": 1.2102669973212866e-12,
+      "rms_fractional_error": 6.828072442191375e-10
+    },
+    "delta": {
+      "max_abs_error": 3.0361895994330396e-18,
+      "max_fractional_error": 8.116900681307929e-09,
+      "mean_abs_error": 3.960787503588159e-19,
+      "mean_fractional_error": 1.0914463436576194e-11,
+      "ref_max_abs": 8.372504063045395e-06,
+      "relative_l2_error": 2.4820987733040355e-13,
+      "rms_abs_error": 5.7356135753620995e-19,
+      "rms_fractional_error": 1.6920239772397525e-10
+    },
+    "eta": {
+      "max_abs_error": 4.025100565352435e-18,
+      "max_fractional_error": 6.108561366229178e-14,
+      "mean_abs_error": 3.9590663234620207e-19,
+      "mean_fractional_error": 8.51634626294571e-15,
+      "ref_max_abs": 7.017876163459272e-05,
+      "relative_l2_error": 1.5604105100981047e-14,
+      "rms_abs_error": 7.190883593947175e-19,
+      "rms_fractional_error": 1.257356482396625e-14
+    }
+  },
+  "output_dir": "testing/long_run_parity_outputs/forced_default_100d",
+  "params": {
+    "DPhieq": 1000000.0,
+    "K6": 1.24e+33,
+    "M": 42,
+    "Phibar": 300000.0,
+    "a": 82000000.0,
+    "alpha": 0.01,
+    "diffflag": true,
+    "dt": 1200.0,
+    "expflag": false,
+    "forcflag": true,
+    "g": 9.8,
+    "modalflag": true,
+    "omega": 3.2e-05,
+    "taudrag": 21600.0,
+    "taurad": 36000.0,
+    "test": null,
+    "tmax": 3601
+  },
+  "plot_png": "testing/long_run_parity_outputs/forced_default_100d/terminal_comparison.png",
+  "runtime_seconds": {
+    "my_swamp": 12.90846020799654,
+    "swampe": 447.4871844589943
+  },
+  "tmax": 3601
+}

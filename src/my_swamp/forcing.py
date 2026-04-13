@@ -17,8 +17,30 @@ def Phieqfun(
     J: int,
     g: float
 ) -> jnp.ndarray:
-    """
-    Evaluates the equilibrium geopotential from Perez-Becker and Showman (2013).
+    """Evaluates the equilibrium geopotential from Perez-Becker and Showman (2013).
+
+    Parameters
+    ----------
+    Phibar : float
+        Reference (mean) geopotential in SI units.
+    DPhieq : float
+        Day-night equilibrium geopotential contrast.
+    lambdas : jnp.ndarray
+        Longitudes in radians with shape ``(I,)``.
+    mus : jnp.ndarray
+        Sine of Gaussian latitudes with shape ``(J,)``.
+    I : int
+        Number of longitude grid points.
+    J : int
+        Number of Gaussian latitude grid points.
+    g : float
+        Surface gravity (unused in the current formulation but kept for
+        API compatibility with the original SWAMPE).
+
+    Returns
+    -------
+    jnp.ndarray
+        Equilibrium geopotential field with shape ``(J, I)``.
     """
     lam = lambdas[None, :]  # (1, I)
     mu = mus[:, None]       # (J, 1)
@@ -43,9 +65,26 @@ def Qfun(
     Phibar: float,
     taurad: float
 ) -> jnp.ndarray:
-    """
-    Evaluates the radiative forcing on the geopotential.
-    Q corresponds to the forcing from Perez-Becker and Showman (2013).
+    """Evaluates the radiative forcing on the geopotential.
+
+    Q = (Phieq - (Phi + Phibar)) / taurad, following Perez-Becker and
+    Showman (2013).
+
+    Parameters
+    ----------
+    Phieq : jnp.ndarray
+        Equilibrium geopotential field with shape ``(J, I)``.
+    Phi : jnp.ndarray
+        Current geopotential perturbation with shape ``(J, I)``.
+    Phibar : float
+        Reference (mean) geopotential.
+    taurad : float
+        Radiative relaxation timescale in seconds.
+
+    Returns
+    -------
+    jnp.ndarray
+        Radiative forcing field with shape ``(J, I)``.
     """
     Q = (1 / taurad) * (Phieq - (Phi + Phibar))
     return Q
@@ -59,10 +98,31 @@ def Rfun(
     Phibar: float,
     taudrag: float
 ):
-    """
-    Evaluates the velocity forcing in Perez-Becker and Showman.
-    
-    Includes Q<0 handling and taudrag==-1 case from original.
+    """Evaluates the velocity forcing from Perez-Becker and Showman (2013).
+
+    Negative Q values are clamped to zero (mass-loss prevention).  When
+    ``taudrag == -1``, Rayleigh drag is disabled.
+
+    Parameters
+    ----------
+    U : jnp.ndarray
+        Zonal wind field with shape ``(J, I)``.
+    V : jnp.ndarray
+        Meridional wind field with shape ``(J, I)``.
+    Q : jnp.ndarray
+        Radiative forcing field with shape ``(J, I)``.
+    Phi : jnp.ndarray
+        Current geopotential perturbation with shape ``(J, I)``.
+    Phibar : float
+        Reference (mean) geopotential.
+    taudrag : float
+        Drag timescale in seconds.  ``-1`` disables Rayleigh drag.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        ``(F, G)`` velocity forcing fields for zonal and meridional
+        directions, each with shape ``(J, I)``.
     """
     # Clone Q and zero out negative values (mass loss prevention)
     Qclone = jnp.where(Q < 0, 0.0, Q)

@@ -31,6 +31,8 @@ import ordering in interactive sessions.
 
 from __future__ import annotations
 
+from typing import Any
+
 try:
     import jax
     import jax.numpy as jnp
@@ -39,23 +41,26 @@ try:
         """Return True if JAX 64-bit mode is enabled."""
         return bool(jax.config.read("jax_enable_x64"))
 
-    def float_dtype():
-        """Return the package float dtype (float32 or float64)."""
+    def float_dtype() -> Any:
+        """Return ``jnp.float64`` when x64 is enabled, else ``jnp.float32``."""
         return jnp.float64 if x64_enabled() else jnp.float32
 
-    def complex_dtype():
-        """Return the package complex dtype (complex64 or complex128)."""
+    def complex_dtype() -> Any:
+        """Return ``jnp.complex128`` when x64 is enabled, else ``jnp.complex64``."""
         return jnp.complex128 if x64_enabled() else jnp.complex64
 
 except Exception:  # pragma: no cover
     # Allow import in environments where JAX isn't installed (docs, packaging).
-    import numpy as np  # type: ignore
+    import numpy as np
 
     def x64_enabled() -> bool:
+        """Return True (fallback assumes float64 when JAX is unavailable)."""
         return True
 
-    def float_dtype():
+    def float_dtype() -> Any:
+        """Return ``np.float64`` (fallback when JAX is unavailable)."""
         return np.float64
 
-    def complex_dtype():
+    def complex_dtype() -> Any:
+        """Return ``np.complex128`` (fallback when JAX is unavailable)."""
         return np.complex128

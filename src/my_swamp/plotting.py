@@ -12,6 +12,16 @@ import imageio
 
 
 def _to_numpy(x):
+    """Return to numpy.
+    
+    Parameters
+    ----------
+    x : Any
+    
+    Returns
+    -------
+    Any
+    """
     # Accept NumPy arrays, JAX arrays, or array-likes.
     try:
         import jax.numpy as jnp  # type: ignore
@@ -24,7 +34,7 @@ def _to_numpy(x):
 
 def mean_zonal_wind_plot(plotdata,mus,timestamp,units='hours',customtitle=None,customxlabel=None,savemyfig=False,filename=None,custompath=None,color=None):
     """Generates a plot of mean zonal winds (averaged across all longitudes). 
-
+    
     :param plotdata: Wind data, ususally U, of size (J,I).
     :type plotdata: array of float
     :param mus: Array of Gaussian latitudes of length J.
@@ -55,12 +65,12 @@ def mean_zonal_wind_plot(plotdata,mus,timestamp,units='hours',customtitle=None,c
     #convert latitudes to degrees
     Y = np.arcsin(mus)*180/np.pi #generate latitudes in degrees
     
-    fig = plt.figure()
-    
+    plt.figure()
+
     if color is not None:
-        fig=plt.plot(zonal_mean, Y,color=color)
+        plt.plot(zonal_mean, Y,color=color)
     else:
-        fig=plt.plot(zonal_mean, Y)
+        plt.plot(zonal_mean, Y)
     
     if customxlabel is None:    
         plt.xlabel('mean U, m/s')
@@ -87,12 +97,23 @@ def mean_zonal_wind_plot(plotdata,mus,timestamp,units='hours',customtitle=None,c
             plt.savefig(custompath+filename, bbox_inches='tight', dpi=800)
     
     plt.show()
-    return fig
+    return plt.gcf()
 
-#need for colorbar
+# Formatter used by the geopotential colorbar and axis labels.
 def fmt(x, pos):
     """Generates the format for scientific notation in axis and colorbar labels.
-
+    
+    Parameters
+    ----------
+    x : Any
+        Tick value to format.
+    pos : Any
+        Tick position passed by Matplotlib and ignored by the formatter.
+    
+    Returns
+    -------
+    Any
+        MathText string representing ``x`` in scientific notation.
     """
     a, b = '{:.2e}'.format(x).split('e')
     b = int(b)
@@ -100,7 +121,7 @@ def fmt(x, pos):
 
 def quiver_geopot_plot(U,V,Phi,lambdas,mus,timestamp,sparseness=4,minlevel=None,maxlevel=None,units='hours',customtitle=None,savemyfig=False,filename=None,custompath=None,axlabels=False,colormap=None):
     """Generates a quiver plot with the geopotential field and overlayed wind vectors.
-
+    
     :param U: lat-lon zonal wind component, (J,I)
     :type U: array of float
     :param V: lat-lon meridional wind component, (J,I)
@@ -192,7 +213,7 @@ def quiver_geopot_plot(U,V,Phi,lambdas,mus,timestamp,sparseness=4,minlevel=None,
 
 def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,customylabel=None,savemyfig=False,filename=None,custompath=None,color=None,legendflag=True,customlegend=None):
     """Generates a plot of RMS winds and minimal winds over time. Can be useful for monitoring spinup.
-
+    
     :param plotdata: Spinup winds, of size (2,tmax).
     :type plotdata: array of float
     :param dt: timestep length, in seconds
@@ -218,7 +239,7 @@ def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,cus
     :param customlegend: option to customize the legend, defaults to None
     :type customlegend: array of string, optional
     :return: figure
-    :rtype: matplotlib figure 
+    :rtype: matplotlib figure
     """
     tmax=np.shape(plotdata)[0]
     
@@ -232,12 +253,12 @@ def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,cus
         print('Cannot parse units. Acceptable units are: hours, minutes, seconds.')
     
     t = np.linspace(0, tlim, num=tmax, endpoint=True)
-    fig_spinup = plt.figure()
+    plt.figure()
     if color is not None:
-        fig_spinup=plt.plot(t, plotdata[:,0],color=color[0])
+        plt.plot(t, plotdata[:,0],color=color[0])
         plt.plot(t, plotdata[:,1],color=color[1])
     else:
-        fig_spinup=plt.plot(t, plotdata[:,0])
+        plt.plot(t, plotdata[:,0])
         plt.plot(t, plotdata[:,1])
     
     
@@ -275,13 +296,13 @@ def spinup_plot(plotdata,dt,units='hours',customtitle=None,customxlabel=None,cus
             plt.savefig(custompath+filename, bbox_inches='tight', dpi=800)
     
     plt.show()
-    return fig_spinup
+    return plt.gcf()
 
 
 
 def gif_helper(fig,dpi=200):
     """Converts the figure to image format for gif generation.
-
+    
     :param fig: figure
     :type fig: matplotlib figure
     :param dpi: resolution, defaults to 200
@@ -298,7 +319,7 @@ def gif_helper(fig,dpi=200):
 
 def write_quiver_gif(lambdas,mus,Phidata,Udata,Vdata,timestamps,filename,frms=5,sparseness=4,dpi=200,minlevel=None,maxlevel=None,units='hours',customtitle=None,custompath=None,axlabels=False,colormap=None):
     """Writes a gif generated from a series of geopotential quiver plots.
-
+    
     :param lambdas: Uniformly spaced longitudes of length I.
     :type lambdas: array of float
     :param mus: Gaussian latitudes of length J.
@@ -333,6 +354,7 @@ def write_quiver_gif(lambdas,mus,Phidata,Udata,Vdata,timestamps,filename,frms=5,
     :type axlabels: bool, optional
     :param colormap: option to change the colormap, defaults to nipy.spectral
     :type colormap: matplotlib colormap, optional
+    
     """
     Udata = _to_numpy(Udata)
     Vdata = _to_numpy(Vdata)

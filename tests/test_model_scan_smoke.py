@@ -6,6 +6,7 @@ import pytest
 
 @pytest.mark.smoke
 def test_run_model_scan_smoke() -> None:
+    """Verify that `run_model` completes a minimal scan-based rollout."""
     import jax  # noqa: F401  # pylint: disable=unused-import
     from my_swamp.model import run_model_scan
 

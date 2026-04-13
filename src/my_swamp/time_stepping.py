@@ -64,9 +64,64 @@ def tstepping(
     reference NumPy SWAMPE behavior as closely as possible.
 
     Scheme selection specializes to a Python branch when `expflag` is static.
+
+    Parameters
+    ----------
+    etam0 : Any
+    etam1 : Any
+    deltam0 : Any
+    deltam1 : Any
+    Phim0 : Any
+    Phim1 : Any
+    I : Any
+    J : Any
+    M : Any
+    N : Any
+    Am : Any
+    Bm : Any
+    Cm : Any
+    Dm : Any
+    Em : Any
+    Fm : Any
+    Gm : Any
+    Um : Any
+    Vm : Any
+    fmn : Any
+    Pmn : Any
+    Hmn : Any
+    Pmnw : Any
+    Hmnw : Any
+    tstepcoeff : Any
+    tstepcoeff2 : Any
+    tstepcoeffmn : Any
+    marray : Any
+    mJarray : Any
+    narray : Any
+    PhiFm : Any
+    dt : Any
+    a : Any
+    Phibar : Any
+    taurad : Any
+    taudrag : Any
+    forcflag : Any
+    diffflag : Any
+    expflag : Any
+    sigma : Any
+    sigmaPhi : Any
+    test : Any
+    t : Any
+
+    Returns
+    -------
+    tuple
+        Tuple ``(newetamn, neweta, newetam, newdeltamn, newdelta, newdeltam,
+        newPhimn, newPhi, newPhim, newU, newV, newUm, newVm)`` containing the
+        updated spectral coefficients, physical fields, and truncated Fourier
+        wind coefficients for the next leapfrog level.
     """
 
     def do_explicit(_: object):
+        """Advance one step using the explicit (leapfrog) scheme."""
         newPhimn, newPhitstep, newPhim = exp_tdiff.phi_timestep(
             etam0,
             etam1,
@@ -198,6 +253,7 @@ def tstepping(
         return newetamn, newetatstep, newetam, newdeltamn, newdeltatstep, newdeltam, newPhimn, newPhitstep, newPhim, Unew, Vnew, newUm, newVm
 
     def do_modeuler(_: object):
+        """Advance one step using the modified-Euler scheme."""
         newPhimn, newPhitstep, newPhim = mod_tdiff.phi_timestep(
             etam0,
             etam1,
@@ -332,6 +388,10 @@ def tstepping(
 
 
 def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
+    """Spectral coefficient array ``a / [n(n+1)]`` for wind inversion.
+
+    Shape ``(M+1, N+1)``.  The n=0 row is zeroed out.
+    """
     n = jnp.arange(N + 1, dtype=float_dtype())
     coeff = n * (n + 1)
     coeff = coeff.at[0].set(1.0)
@@ -341,16 +401,19 @@ def tstepcoeffmn(M: int, N: int, a: float) -> jnp.ndarray:
 
 
 def tstepcoeff2(J: int, M: int, dt: float, a: float) -> jnp.ndarray:
+    """Uniform coefficient array ``2*dt / a**2`` with shape ``(J, M+1)``."""
     return jnp.full((J, M + 1), 2.0 * dt / (a**2), dtype=float_dtype())
 
 
 def narray(M: int, N: int) -> jnp.ndarray:
+    """Degree-squared array ``n*(n+1)`` broadcast to shape ``(M+1, N+1)``."""
     n = jnp.arange(N + 1, dtype=float_dtype())
     nnp1 = n * (n + 1)
     return jnp.broadcast_to(nnp1[None, :], (M + 1, N + 1))
 
 
 def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.ndarray:
+    """Latitude-dependent coefficient ``2*dt / [a*(1-mu^2)]`` with shape ``(J, M+1)``."""
     mu = mus[:, None]
     # Match NumPy SWAMPE: Gauss–Legendre `mus` are strictly in (-1, 1), so
     # no division-by-zero guard is applied.
@@ -359,22 +422,47 @@ def tstepcoeff(J: int, M: int, dt: float, mus: jnp.ndarray, a: float) -> jnp.nda
 
 
 def mJarray(J: int, M: int) -> jnp.ndarray:
+    """Zonal wavenumber array ``m`` broadcast to shape ``(J, M+1)``."""
     m = jnp.arange(M + 1, dtype=float_dtype())[None, :]
     return jnp.broadcast_to(m, (J, M + 1))
 
 
 def marray(M: int, N: int) -> jnp.ndarray:
+    """Zonal wavenumber array ``m`` broadcast to shape ``(M+1, N+1)``."""
     m = jnp.arange(M + 1, dtype=float_dtype())[:, None]
     return jnp.broadcast_to(m, (M + 1, N + 1))
 
 
 def RMS_winds(a: float, I: int, J: int, lambdas: jnp.ndarray, mus: jnp.ndarray, U: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:
-    """Compute RMS winds.
+    """Area-weighted RMS wind speed (scalar), matching the reference SWAMPE discretization.
 
-    This matches the reference SWAMPE discretization (vectorized):
-        area_comp = a^2 * (sin(phi + pi/2))^2 * dphi * dlambda
+    Formula (vectorized)::
+
+        area_comp = a^2 * sin(phi + pi/2)^2 * dphi * dlambda
         integrand = (U/cos(phi))^2 + (V/cos(phi))^2
-        rms = sqrt( sum(area_comp * integrand / area_planet) )
+        rms = sqrt( sum(area_comp * integrand) / area_planet )
+
+    Parameters
+    ----------
+    a : float
+        Planetary radius in meters.
+    I : int
+        Number of longitude grid points.
+    J : int
+        Number of Gaussian latitude grid points.
+    lambdas : jnp.ndarray
+        Longitudes with shape ``(I,)``.
+    mus : jnp.ndarray
+        Sine of Gaussian latitudes with shape ``(J,)``.
+    U : jnp.ndarray
+        Zonal wind field with shape ``(J, I)``.
+    V : jnp.ndarray
+        Meridional wind field with shape ``(J, I)``.
+
+    Returns
+    -------
+    jnp.ndarray
+        Scalar RMS wind speed.
     """
     phis = jnp.arcsin(mus)[:, None]  # (J,1)
     deltalambda = lambdas[2] - lambdas[1]

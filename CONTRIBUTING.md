@@ -23,4 +23,4 @@ pytest -q
 
 - Keep changes focused and well-scoped.
 - Add or update tests when fixing bugs or adding functionality.
-- If you change numerical kernels or spectral conventions, update/extend the transform identity tests.
+- If you change numerical kernels or spectral conventions, update/extend the spectral transform tests in `tests/test_transform_stack.py`.

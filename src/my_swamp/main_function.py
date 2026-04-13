@@ -64,20 +64,92 @@ def main(
 
     Parameters
     ----------
-    The parameter list intentionally matches the original SWAMPE `main_function.py`.
-    Some parameters (k1/k2/pressure/R/Cp/sigmaSB) are accepted for API compatibility
-    but are not used by the maintained SWAMPE/model.py driver in the provided archive,
-    and are therefore ignored here as well.
-
-    Supported regimes in this JAX port:
-      - test == 1
-      - test == 2
-      - test is None  (forced mode)
+    M : int
+        Spectral truncation with ``N=M`` in the downstream solver.
+    dt : float
+        Timestep in seconds.
+    tmax : int
+        Number of model steps to execute.
+    Phibar : float
+        Reference geopotential in SI units.
+    omega : float
+        Planetary rotation rate in radians per second.
+    a : float
+        Planetary radius in meters.
+    test : Optional[int]
+        Legacy test selector. ``0`` is remapped to forced mode, and ``1`` or
+        ``2`` select the idealized Williamson-style tests supported by the JAX
+        port.
+    g : float
+        Surface gravity in meters per second squared.
+    forcflag : int or bool
+        Enables thermal forcing when truthy.
+    taurad : float
+        Radiative relaxation timescale in seconds.
+    taudrag : float
+        Drag timescale in seconds.
+    DPhieq : float
+        Day-night equilibrium geopotential contrast.
+    a1 : float
+        Tilt angle used by the analytic test initial conditions.
+    plotflag : int or bool
+        Enables legacy plotting side effects when truthy.
+    plotfreq : int
+        Plot cadence in timesteps.
+    minlevel : Optional[float]
+        Minimum contour level for geopotential plots.
+    maxlevel : Optional[float]
+        Maximum contour level for geopotential plots.
+    diffflag : int or bool
+        Enables hyperdiffusion when truthy.
+    modalflag : int or bool
+        Enables the modal/Robert-Asselin correction branch when truthy.
+    alpha : float
+        Robert-Asselin filter coefficient.
+    contflag : int or bool
+        Enables continuation from saved state when truthy.
+    saveflag : int or bool
+        Enables legacy data-saving side effects when truthy.
+    expflag : int or bool
+        Selects the explicit timestepper when truthy, otherwise modified Euler.
+    savefreq : int
+        Save cadence in timesteps.
+    k1 : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    k2 : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    pressure : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    R : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    Cp : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    sigmaSB : float
+        Legacy compatibility parameter accepted but ignored by this maintained
+        JAX wrapper.
+    K6 : float
+        Sixth-order diffusion coefficient for vorticity and divergence.
+    custompath : Optional[str]
+        Optional directory used for continuation loads and legacy outputs.
+    contTime : Optional[str]
+        Timestamp token used when loading continuation files.
+    timeunits : str
+        Units used to interpret continuation timestamps.
+    verbose : bool
+        Enables verbose progress logging in the downstream wrapper.
+    K6Phi : Optional[float]
+        Optional sixth-order diffusion coefficient for geopotential.
 
     Returns
     -------
     dict
-        A dict matching `model.run_model(...)` output.
+        Output dictionary returned by `model.run_model(...)`, preserving the
+        legacy wrapper behavior.
     """
     # Normalize flags (legacy code used 0/1 ints).
     forcflag_b = bool(forcflag)
@@ -140,6 +212,13 @@ def main(
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI flags for the legacy-compatible SWAMPE wrapper.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed command-line arguments for :func:`cli_main`.
+    """
     p = argparse.ArgumentParser(description="SWAMPE shallow-water model (JAX rewrite).")
 
     # Mirror common knobs; keep defaults aligned with SWAMPE/main_function.py.
@@ -210,6 +289,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def cli_main() -> None:
+    """Run the command-line entrypoint for the legacy wrapper module.
+
+    This parses command-line arguments, normalizes the legacy ``test=0``
+    convention to ``test=None``, and dispatches to :func:`main`.
+    """
     args = _parse_args()
     test_val: Optional[int] = None if int(args.test) == 0 else int(args.test)
 

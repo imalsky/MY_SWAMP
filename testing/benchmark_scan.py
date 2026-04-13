@@ -19,6 +19,7 @@ from my_swamp.model import run_model_scan_final  # noqa: E402
 
 
 def _bool_arg(x: str) -> bool:
+    """Parse common boolean strings for benchmark CLI flags."""
     v = str(x).strip().lower()
     if v in {"1", "true", "yes", "y", "on"}:
         return True
@@ -28,6 +29,7 @@ def _bool_arg(x: str) -> bool:
 
 
 def _run_once(args: argparse.Namespace):
+    """Execute one benchmark run and block on the terminal state."""
     res = run_model_scan_final(
         M=args.M,
         dt=args.dt,
@@ -56,6 +58,7 @@ def _run_once(args: argparse.Namespace):
 
 
 def main() -> None:
+    """Run the scan benchmark entrypoint."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", type=str, default="cpu", help="Requested JAX backend (cpu/gpu/tpu).")
     parser.add_argument("--require-gpu", action="store_true", help="Fail fast when GPU backend is unavailable.")

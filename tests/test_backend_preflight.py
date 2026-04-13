@@ -5,6 +5,7 @@ import pytest
 
 @pytest.mark.smoke
 def test_backend_preflight_cpu() -> None:
+    """Verify that CPU backend preflight reports visible devices."""
     from my_swamp.backend_preflight import preflight_backend
 
     info = preflight_backend("cpu")
@@ -14,6 +15,7 @@ def test_backend_preflight_cpu() -> None:
 
 @pytest.mark.smoke
 def test_backend_preflight_invalid_backend() -> None:
+    """Verify that unsupported backend requests raise a runtime error."""
     from my_swamp.backend_preflight import preflight_backend
 
     with pytest.raises(RuntimeError):

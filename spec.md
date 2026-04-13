@@ -1,7 +1,7 @@
 # MY_SWAMP Specification
 
-Last updated: 2026-03-03 (America/Los_Angeles)
-Project root: `/Users/imalsky/Desktop/SWAMPE_Project/MY_SWAMP`
+Last updated: 2026-04-01 (America/Los_Angeles)
+Project root: (repository root, i.e. the directory containing `pyproject.toml`)
 
 This document is scoped to `MY_SWAMP` only.
 
@@ -63,6 +63,7 @@ Expected terminal state fields:
 5. `delta`
 
 Initial-condition override support must remain available through explicit inputs (`eta0_init`, `delta0_init`, `Phi0_init`, `U0_init`, `V0_init`) where exposed by the scan drivers.
+`K6Phi=None` means "inherit `K6`" and must preserve the legacy default diffusion behavior unless explicitly overridden.
 
 ## 5) Retrieval Workflow Contract
 
@@ -78,7 +79,8 @@ Current retrieval workflow in `notebooks/nss.py` is steady-state oriented.
 1. Float64 mode is required for parity-grade comparisons (`SWAMPE_JAX_ENABLE_X64=1`).
 2. Backend preflight checks are part of the supported runtime path.
 3. CPU backend (`JAX_PLATFORMS=cpu`) is the default validation target for deterministic CI-style checks on this workspace.
-4. Performance options (for example donation/remat toggles) are allowed only when behavior remains parity-safe.
+4. The validated packaging matrix is the JAX 0.4 line with NumPy 1.x; package metadata and docs must not advertise unsupported broader ranges.
+5. Performance options (for example donation/remat toggles) are allowed only when behavior remains parity-safe.
 
 ## 7) Verification Baseline
 
