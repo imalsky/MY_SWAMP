@@ -17,7 +17,7 @@ import scipy.special as sp
 
 ROOT = Path(__file__).resolve().parents[1]
 REF_ROOT = ROOT.parents[0] / "SWAMPE"
-OUT_DIR = ROOT / "tests" / "fixtures"
+OUT_DIR = ROOT / "unit_tests" / "fixtures"
 
 
 def _ensure_lpmn_compat() -> None:

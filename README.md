@@ -2,7 +2,7 @@
 
 A JAX rewrite of the SWAMPE spectral shallow‑water model on the sphere. The numerical core runs inside `jax.lax.scan`, so the forward simulation is end‑to‑end differentiable with respect to continuous physical parameters and explicit initial conditions.
 
-Document version: 2026-04-01
+Document version: 2026-04-12
 
 ---
 
@@ -56,6 +56,9 @@ Repository (high level):
 ```
 MY_SWAMP/
 ├── readme.md
+├── CONTRIBUTING.md
+├── spec.md
+├── updates.md
 ├── LICENCE.txt
 ├── pyproject.toml
 ├── setup.py
@@ -81,10 +84,8 @@ MY_SWAMP/
 │       ├── continuation.py          # Pickle I/O for save/load/continuation
 │       ├── plotting.py              # Matplotlib plotting helpers + GIF generation
 │       └── autodiff_utils.py        # Forward-mode utilities (JVP chunking)
-├── tests/                           # Pytest suite for packaging + smoke tests
-├── notebooks/                       # Example notebooks
-├── paper/                           # Paper / writeup assets
-└── dist/                            # Build artifacts (sdist/wheels), if present
+├── unit_tests/                      # Pytest suite for packaging + smoke tests
+└── testing/                         # Benchmarks, fixture generation, and parity tooling
 ```
 
 Reference (NumPy/SciPy) SWAMPE code is not shipped inside this archive. When this README refers to “parity with NumPy SWAMPE”, it means parity with the upstream SWAMPE reference implementation, not a directory contained here.
@@ -563,4 +564,4 @@ It also writes `terminal_comparison.png`, which shows the legacy SWAMPE fields, 
 | Continuation save/load | `continuation.py` |
 | Plotting | `plotting.py` |
 | Forward-mode AD utils | `autodiff_utils.py` |
-| Transform/unit tests | `tests/test_transform_stack.py`, `tests/` |
+| Transform/unit tests | `unit_tests/test_transform_stack.py`, `unit_tests/` |

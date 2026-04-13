@@ -116,7 +116,17 @@ jax_cache/
 # === Test artifacts / reports ===
 test-results/
 reports/
-tests/_compare_outputs/
+unit_tests/_compare_outputs/
+
+# === Assistant / LLM docs ===
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+COPILOT.md
+CURSOR.md
+QWEN.md
+llms*.txt
+*.llm.md
 
 # === Local config overrides (keep templates, ignore secrets/local) ===
 .env
@@ -134,4 +144,4 @@ secrets.*
 *.tgz
 
 # Keep committed parity fixtures.
-!tests/fixtures/*.npz
+!unit_tests/fixtures/*.npz

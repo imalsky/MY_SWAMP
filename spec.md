@@ -1,6 +1,6 @@
 # MY_SWAMP Specification
 
-Last updated: 2026-04-01 (America/Los_Angeles)
+Last updated: 2026-04-12 (America/Los_Angeles)
 Project root: (repository root, i.e. the directory containing `pyproject.toml`)
 
 This document is scoped to `MY_SWAMP` only.
@@ -21,8 +21,8 @@ Primary objectives:
 In scope:
 
 1. `src/my_swamp/*` solver, transforms, forcing, filtering, and model drivers.
-2. `tests/*` and `testing/*` parity/smoke/benchmark validation.
-3. Retrieval-facing notebook utilities under `notebooks/` that consume `my_swamp`.
+2. `unit_tests/*` and `testing/*` parity/smoke/benchmark validation.
+3. Package-level runtime and validation workflows rooted in `src/my_swamp/`, `unit_tests/`, and `testing/`.
 
 Out of scope for this spec:
 
@@ -67,12 +67,11 @@ Initial-condition override support must remain available through explicit inputs
 
 ## 5) Retrieval Workflow Contract
 
-Current retrieval workflow in `notebooks/nss.py` is steady-state oriented.
+This repository snapshot does not include notebook-based retrieval utilities.
 
-1. Terminal-map usage is intentional (`swamp_terminal_phi` path).
-2. `map_projection_mode="shape_plus_amplitude"` keeps monopole amplitude.
-3. `map_projection_mode="shape_only"` intentionally drops amplitude.
-4. Adaptive convergence stopping in the outer loop is optional and config-driven.
+1. Retrieval/inference workflows should call the package APIs directly.
+2. `my_swamp.model.run_model_scan_final(...)` remains the preferred terminal-state path for retrieval-style workloads.
+3. Terminal-map usage and projection policy are owned by downstream callers outside this repository snapshot.
 
 ## 6) Runtime and Precision Policy
 
@@ -91,7 +90,7 @@ Validation commands for this repository:
 3. `JAX_PLATFORMS=cpu pytest -q -m smoke`
 4. `JAX_PLATFORMS=cpu pytest -q -m parity`
 5. `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity` (expected parity failures; validates x64 gate)
-6. `ruff check src tests testing notebooks/nss.py`
+6. `ruff check src unit_tests testing`
 
 ## 8) Repository Map (MY_SWAMP Only)
 
@@ -105,7 +104,7 @@ Core package modules under `src/my_swamp/`:
 
 Validation paths:
 
-1. `tests/` (packaging, smoke, parity regressions)
+1. `unit_tests/` (packaging, smoke, parity regressions)
 2. `testing/` (benchmark and fixture tooling)
 
 ## 9) Change Control
