@@ -118,14 +118,19 @@ test-results/
 reports/
 unit_tests/_compare_outputs/
 
+# Long-run parity outputs are regenerated; everything in there is ignored
+# *except* the baseline summary.json that is checked in for tracking drift.
+testing/long_run_parity_outputs/**
+
 # === Assistant / LLM docs ===
+# Personal-flavor assistant configs and per-user notes are ignored.
+# Project-level CLAUDE.md is committed (see negation at end of file).
 .claude/
 .cursor/
 .copilot/
 .gemini/
 .qwen/
 AGENTS.md
-CLAUDE.md
 GEMINI.md
 COPILOT.md
 CURSOR.md
@@ -148,5 +153,12 @@ secrets.*
 *.tar.gz
 *.tgz
 
-# Keep committed parity fixtures.
+# === Negations: explicitly keep these committed ===
+# Project-level Claude guide.
+!CLAUDE.md
+# Parity fixtures generated from reference NumPy SWAMPE.
 !unit_tests/fixtures/*.npz
+# Baseline summary from the long-run parity script (used for drift tracking).
+!testing/long_run_parity_outputs/
+!testing/long_run_parity_outputs/*/
+!testing/long_run_parity_outputs/*/summary.json

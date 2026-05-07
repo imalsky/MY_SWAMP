@@ -72,16 +72,7 @@ def phi_timestep(
     Phimntstep = Phicomp1 - Phicomp2 + Phicomp3 - Phicomp4
 
     def _add_forcing(x):
-        """Return add forcing.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Add the spectral forcing contribution to the running tendency."""
         Phiforcing = st.fwd_leg_w(2.0 * dt * PhiFm, Pmnw)
         return x + Phiforcing
 
@@ -149,16 +140,7 @@ def delta_timestep(
     deltamntstep = deltacomp1
 
     def _add_forcing(x):
-        """Return add forcing.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Add the spectral forcing contribution to the running tendency."""
         # The reference explicit scheme includes additional terms proportional
         # to U/taudrag and V/taudrag *in addition* to Fm/Gm (which already
         # include Rayleigh drag via forcing.Rfun). This is preserved for parity.
@@ -233,16 +215,7 @@ def eta_timestep(
     etamntstep = etacomp1 - etacomp2 + etacomp3
 
     def _add_forcing(x):
-        """Return add forcing.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Add the spectral forcing contribution to the running tendency."""
         etaf1prep = (tstepcoeff1 * (1j) * mJarray * Vm) / taudrag
         etaf2prep = (tstepcoeff1 * Um) / taudrag
         etaf3prep = tstepcoeff1 * (1j) * mJarray * Gm

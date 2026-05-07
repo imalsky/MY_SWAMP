@@ -234,7 +234,9 @@ def _parse_args() -> argparse.Namespace:
 
     p.add_argument("--a", type=float, default=6.37122e6)
     p.add_argument("--omega", type=float, default=7.292e-5)
-    p.add_argument("--g", type=float, default=9.80616)
+    # Match the default used by my_swamp.model.run_model (g=9.8) so behavior is
+    # consistent across the CLI, the legacy main(), and the run_model wrapper.
+    p.add_argument("--g", type=float, default=9.8)
     p.add_argument("--Phibar", type=float, default=3.0e5)
 
     p.add_argument("--taurad", type=float, default=86400.0)

@@ -153,7 +153,8 @@ def state_var_init(
 
         # With mucenter=0, the expression simplifies but we keep the original form.
         dist_arg = mucenter * mu + jnp.cos(jnp.arcsin(mucenter)) * jnp.cos(jnp.arcsin(mu)) * jnp.cos(lam - lambdacenter)
-        dist = a * jnp.arccos(dist_arg)
+        # Clip against floating-point overshoot so arccos cannot return NaN.
+        dist = a * jnp.arccos(jnp.clip(dist_arg, -1.0, 1.0))
 
         bump = (Phibar / 2.0) * (1.0 + jnp.cos(jnp.pi * dist / bumpr))
         Phiic0 = jnp.where(dist < bumpr, bump, 0.0)

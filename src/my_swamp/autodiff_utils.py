@@ -77,16 +77,7 @@ def fwd_grad(
     eye = jnp.eye(p, dtype=theta.dtype)
 
     def one_dir(v: jnp.ndarray) -> jnp.ndarray:
-        """Return one dir.
-        
-        Parameters
-        ----------
-        v : jnp.ndarray
-        
-        Returns
-        -------
-        jnp.ndarray
-        """
+        """Compute a single directional derivative ``d(loss)/dv`` via forward-mode JVP."""
         _, dl = jax.jvp(loss_fn, (theta,), (v,))
         return dl
 

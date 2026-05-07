@@ -61,7 +61,13 @@ from . import time_stepping
 from . import model
 from . import autodiff_utils
 
-from .model import run_model, run_model_gpu, run_model_scan, run_model_scan_final
+from .model import (
+    assert_finite_state,
+    run_model,
+    run_model_gpu,
+    run_model_scan,
+    run_model_scan_final,
+)
 from .autodiff_utils import fwd_grad
 
 
@@ -78,6 +84,7 @@ __all__ = [
     "model",
     "main_function",
     "autodiff_utils",
+    "assert_finite_state",
     "run_model",
     "run_model_gpu",
     "main",

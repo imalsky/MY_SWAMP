@@ -129,11 +129,15 @@ def Rfun(
     """
     # Clone Q and zero out negative values (mass loss prevention)
     Qclone = jnp.where(Q < 0, 0.0, Q)
-    
-    # Compute Ru, Rv
+
+    # Compute Ru, Rv. Guard against transient Phi values driving Phi+Phibar
+    # to zero. This is a small departure from reference SWAMPE (which divides
+    # without a guard), but only affects pathological transients; whenever
+    # Qclone is non-zero in well-posed runs, Phi+Phibar is far from zero.
     phi_total = Phi + Phibar
-    Ru = -U * Qclone / phi_total
-    Rv = -V * Qclone / phi_total
+    phi_total_safe = jnp.where(jnp.abs(phi_total) > 0, phi_total, jnp.finfo(phi_total.dtype).tiny)
+    Ru = -U * Qclone / phi_total_safe
+    Rv = -V * Qclone / phi_total_safe
     
     # Handle taudrag == -1 case (no Rayleigh drag) without Python branching.
     taudrag_arr = jnp.asarray(taudrag)

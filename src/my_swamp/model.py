@@ -47,30 +47,12 @@ from . import time_stepping
 
 
 def _is_python_scalar(x: Any) -> bool:
-    """Return is python scalar.
-    
-    Parameters
-    ----------
-    x : Any
-    
-    Returns
-    -------
-    bool
-    """
+    """Return True when ``x`` is a concrete Python or NumPy float-like scalar."""
     return isinstance(x, (int, float, np.floating))
 
 
 def _tree_has_tracer(pytree: Any) -> bool:
-    """Return True if any leaf in `pytree` is a JAX tracer.
-    
-    Parameters
-    ----------
-    pytree : Any
-    
-    Returns
-    -------
-    bool
-    """
+    """Return True if any leaf in ``pytree`` is a JAX tracer."""
     for leaf in jax.tree_util.tree_leaves(pytree):
         if isinstance(leaf, jax.core.Tracer):
             return True
@@ -192,13 +174,7 @@ class RunFlags:
 
 
     def tree_flatten(self):
-        """Return tree flatten.
-        
-        
-        Returns
-        -------
-        Any
-        """
+        """Flatten into JAX-array children (alpha, blowup_rms) and Python aux data (the bool flags)."""
         children = (
             jnp.asarray(self.alpha, dtype=float_dtype()),
             jnp.asarray(self.blowup_rms, dtype=float_dtype()),
@@ -271,13 +247,7 @@ class Static:
 
 
     def tree_flatten(self):
-        """Return tree flatten.
-        
-        
-        Returns
-        -------
-        Any
-        """
+        """Flatten into JAX-array children (geometry, scalars, basis) and Python aux data (M, N, I, J)."""
         children = (
             self.dt,
             self.a,
@@ -426,16 +396,7 @@ def _dedupe_state_for_donation(state: State) -> State:
     seen_ids: set[int] = set()
 
     def _dedupe_leaf(x: Any) -> Any:
-        """Return dedupe leaf.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Return ``x`` if first time seen, else a fresh copy so JAX donation accepts it."""
         if isinstance(x, jax.Array):
             obj_id = id(x)
             if obj_id in seen_ids:
@@ -555,7 +516,17 @@ def _forcing_phys(
     V: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Return (PhiF, F, G) in physical space for the current state.
-    
+
+    Matches reference SWAMPE: when ``test is None`` the forcing fields F/G/PhiF
+    are computed *unconditionally* of ``flags.forcflag``. The reference SWAMPE
+    timestepper has a historical quirk where the modified-Euler delta update
+    uses ``Bm + Fm`` and ``Am - Gm`` even in its unforced branch, so F/G must
+    leak into the divergence tendency for parity.
+
+    The ``forcflag`` switch only controls whether the forcing terms are *added*
+    inside the timestepper (Phiforcing addition, etc.); it does not gate the
+    computation of F/G/PhiF here.
+
     Parameters
     ----------
     static : Static
@@ -564,13 +535,13 @@ def _forcing_phys(
     Phi : jnp.ndarray
     U : jnp.ndarray
     V : jnp.ndarray
-    
+
     Returns
     -------
     Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
     """
 
-    if (test is None) and flags.forcflag:
+    if test is None:
         Q = forcing.Qfun(static.Phieq, Phi, static.Phibar, static.taurad)
         PhiF = Q
         F, G = forcing.Rfun(U, V, Q, Phi, static.Phibar, static.taudrag)
@@ -794,17 +765,7 @@ def _step_once(
         dead_next = state.dead
 
     def skip_update(_: Any) -> Tuple[State, Dict[str, Any]]:
-        """Return skip update.
-        
-        Parameters
-        ----------
-        _ : Any
-            Unused operand required by the surrounding call signature.
-        
-        Returns
-        -------
-        Tuple[State, Dict[str, Any]]
-        """
+        """Blowup branch: keep the current state and emit current-state diagnostics."""
         out = dict(
             t=t,
             dead=dead_next,
@@ -823,17 +784,7 @@ def _step_once(
         return state._replace(dead=dead_next), out
 
     def do_update(_: Any) -> Tuple[State, Dict[str, Any]]:
-        """Return do update.
-        
-        Parameters
-        ----------
-        _ : Any
-            Unused operand required by the surrounding call signature.
-        
-        Returns
-        -------
-        Tuple[State, Dict[str, Any]]
-        """
+        """Healthy branch: advance one leapfrog step and build the next scan carry."""
         # Core time stepping (returns physical-space fields + spectral eta/delta/Phi)
         newetamn, neweta, newetam, newdeltamn, newdelta, newdeltam, newPhimn, newPhi, newPhim, newU, newV, newUm, newVm = time_stepping.tstepping(
             state.etam_prev,
@@ -902,34 +853,14 @@ def _step_once(
         alpha = jnp.asarray(flags.alpha, dtype=float_dtype())
 
         def apply_ra(_: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            """Return apply ra.
-            
-            Parameters
-            ----------
-            _ : Any
-                Unused operand required by the surrounding call signature.
-            
-            Returns
-            -------
-            Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
-            """
+            """Apply the Robert-Asselin three-level smoothing filter to eta/delta/Phi."""
             eta_mid = state.eta_curr + alpha * (state.eta_prev - 2.0 * state.eta_curr + neweta)
             delta_mid = state.delta_curr + alpha * (state.delta_prev - 2.0 * state.delta_curr + newdelta)
             Phi_mid = state.Phi_curr + alpha * (state.Phi_prev - 2.0 * state.Phi_curr + newPhi)
             return eta_mid, delta_mid, Phi_mid
 
         def no_ra(_: Any) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            """Return no ra.
-            
-            Parameters
-            ----------
-            _ : Any
-                Unused operand required by the surrounding call signature.
-            
-            Returns
-            -------
-            Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
-            """
+            """Identity branch when the Robert-Asselin filter is disabled (e.g., t<=2)."""
             return state.eta_curr, state.delta_curr, state.Phi_curr
 
         eta_mid, delta_mid, Phi_mid = jax.lax.cond(do_ra, apply_ra, no_ra, operand=None)
@@ -1197,6 +1128,22 @@ def run_model_scan(
     """Differentiable full run returning time histories (JAX scan).
 
     Outputs correspond to times `t_seq = arange(starttime, tmax)`.
+
+    Memory cost
+    -----------
+    With ``return_history=True`` (the default), ``outs`` materializes a
+    ``(len(t_seq), J, I)`` array for each of the five physical fields
+    (``eta``, ``delta``, ``Phi``, ``U``, ``V``) plus four ``(len(t_seq),)``
+    scalar diagnostics. The dominant footprint is roughly::
+
+        bytes ≈ 5 * len(t_seq) * J * I * itemsize
+
+    where ``itemsize`` is 8 bytes in float64 mode. For the default ``M=42``
+    grid (``J=64``, ``I=128``), this is ~328 KB per scan step, or ~33 GB at
+    ``len(t_seq)=100_000``. For long integrations and for any optimization
+    or inference loop, prefer :func:`run_model_scan_final` (or pass
+    ``return_history=False``), which discards the per-step output and only
+    materializes the terminal state.
 
     Parameters
     ----------
@@ -1479,12 +1426,18 @@ def run_model_scan(
                 Vic=Vic,
             )
 
+        # Surface the first dead-step index so callers know where the
+        # trajectory froze if the blowup gate tripped. -1 means no blowup.
+        # Computation is JAX-friendly so this stays cheap inside jit/grad.
+        dead_first_idx = _first_dead_index(outs.get("dead"))
+
         return dict(
             static=static,
             t_seq=t_seq,
             outs=outs,
             last_state=last_state,
             starttime=starttime_eff,
+            dead_first_idx=dead_first_idx,
         )
 
     # Final-only path: do not materialize the full trajectory.
@@ -1509,6 +1462,82 @@ def run_model_scan(
         last_state=last_state,
         starttime=starttime_eff,
     )
+
+
+def _first_dead_index(dead: Optional[jnp.ndarray]) -> jnp.ndarray:
+    """Return the first scan-step index at which `dead` is True, or -1.
+
+    Useful when ``flags.diagnostics=True`` and the blowup gate may trip during
+    a scan. The scan output array ``outs["dead"]`` has shape ``(len(t_seq),)``
+    and is monotonic non-decreasing in boolean value.
+
+    Parameters
+    ----------
+    dead : Optional[jnp.ndarray]
+        Boolean per-step array of length ``len(t_seq)``. ``None`` is permitted
+        for callers that did not record the diagnostic.
+
+    Returns
+    -------
+    jnp.ndarray
+        Scalar int32 index. ``-1`` if no step is dead (or ``dead`` is None).
+    """
+    if dead is None:
+        return jnp.asarray(-1, dtype=jnp.int32)
+    dead_arr = jnp.asarray(dead, dtype=jnp.bool_)
+    n = dead_arr.shape[0]
+    if n == 0:
+        return jnp.asarray(-1, dtype=jnp.int32)
+    # argmax returns the first True; if no True exists argmax returns 0,
+    # so cross-check with .any() and substitute -1 in that case.
+    first = jnp.argmax(dead_arr).astype(jnp.int32)
+    return jnp.where(jnp.any(dead_arr), first, jnp.int32(-1))
+
+
+def assert_finite_state(last_state: "State", *, raise_on_nan: bool = True) -> bool:
+    """Assert that a terminal `State` has no NaN/Inf entries in its physical fields.
+
+    This is intended as a final reliability check after `run_model_scan_final`
+    (or `run_model_scan(..., return_history=False)`) when ``diagnostics=False``,
+    where the in-scan blowup gate is bypassed. Callers should invoke this after
+    the scan completes (host-side) to catch silent NaN propagation.
+
+    Parameters
+    ----------
+    last_state : State
+        Terminal scan carry returned by the scan driver.
+    raise_on_nan : bool
+        If True (default), raise ``RuntimeError`` on detection. If False,
+        return ``False`` instead.
+
+    Returns
+    -------
+    bool
+        True when the state is finite. False (only when ``raise_on_nan=False``)
+        when the state contains NaN/Inf.
+    """
+    fields = (
+        ("eta_curr", last_state.eta_curr),
+        ("delta_curr", last_state.delta_curr),
+        ("Phi_curr", last_state.Phi_curr),
+        ("U_curr", last_state.U_curr),
+        ("V_curr", last_state.V_curr),
+    )
+    bad = []
+    for name, arr in fields:
+        if not bool(jnp.all(jnp.isfinite(arr))):
+            bad.append(name)
+    if bad:
+        if raise_on_nan:
+            raise RuntimeError(
+                "Final state contains non-finite values in fields: "
+                + ", ".join(bad)
+                + ". This usually indicates the integration blew up. Consider "
+                "enabling diagnostics=True to gate on RMS-wind blowup, or "
+                "reducing dt / increasing K6."
+            )
+        return False
+    return True
 
 
 def run_model_scan_final(

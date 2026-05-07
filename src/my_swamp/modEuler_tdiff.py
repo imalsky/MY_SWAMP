@@ -104,16 +104,7 @@ def phi_timestep(
     )
 
     def _add_forcing(x):
-        """Return add forcing.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Add the spectral forcing contribution to the running tendency."""
         Phiforcing = st.fwd_leg_w(dt * PhiFm, Pmnw)
         return x + Phiforcing
 
@@ -204,16 +195,7 @@ def delta_timestep(
     )
 
     def _add_forcing(x):
-        """Return add forcing.
-        
-        Parameters
-        ----------
-        x : Any
-        
-        Returns
-        -------
-        Any
-        """
+        """Add the spectral forcing contribution to the running tendency."""
         # Reference SWAMPE includes dt/2 here.
         Phiforcing = (narray * st.fwd_leg_w((dt / 2.0) * PhiFm, Pmnw)) / (a**2)
         return x + Phiforcing
