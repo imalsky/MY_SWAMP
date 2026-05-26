@@ -7,7 +7,7 @@ name = "my-swamp"
 dynamic = ["version"]
 description = "MY_SWAMP: JAX port + reference implementation of SWAMPE"
 readme = "readme.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "BSD-3-Clause"
 authors = [
     { name = "Isaac Malsky", email = "isaacmalsky@gmail.com" },
@@ -22,7 +22,6 @@ dependencies = [
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -69,7 +68,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 src = ["src", "unit_tests", "testing"]
 extend-exclude = ["dist"]
 

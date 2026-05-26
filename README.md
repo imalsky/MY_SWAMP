@@ -116,7 +116,7 @@ Reference (NumPy/SciPy) SWAMPE code is not shipped inside this archive. When thi
 
 Requirements (from `pyproject.toml`):
 
-- Python 3.9+
+- Python 3.10+
 - `numpy>=1.26,<2.0`
 - `scipy>=1.10`  
   Used for Gauss–Legendre nodes/weights and associated Legendre polynomials. (There is fallback code for SciPy-free environments, but the default package installation includes SciPy.)
