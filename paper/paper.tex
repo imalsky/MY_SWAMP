@@ -1,0 +1,378 @@
+% SWAMPE-JAX paper, typeset in the Journal of Open Source Software (JOSS) format.
+% Reproduces the Open Journals LaTeX template (left metadata sidebar, logo header,
+% CC-BY footer). Build with:  make   (pdflatex -> bibtex -> pdflatex x2)
+\documentclass[10pt,a4paper,onecolumn]{article}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{etoolbox}
+\usepackage{titlesec}
+\usepackage{calc}
+\usepackage{tikz}
+\usepackage{hyperref}
+\hypersetup{colorlinks,breaklinks=true,
+            urlcolor=[rgb]{0.0, 0.5, 1.0},
+            linkcolor=[rgb]{0.0, 0.5, 1.0}}
+\usepackage{caption}
+\usepackage{tcolorbox}
+\usepackage{amssymb,amsmath}
+\usepackage{ifxetex,ifluatex}
+\usepackage{xstring}
+
+% seqsplit is unavailable here; \seqsplit only governs long-string line breaking,
+% so we shim it to a no-op and keep \texttt unmodified.
+\providecommand{\seqsplit}[1]{#1}
+\let\textttOrig=\texttt
+
+% Force figures to stay in place (JOSS template behaviour).
+\usepackage{float}
+\let\origfigure\figure
+\let\endorigfigure\endfigure
+\renewenvironment{figure}[1][2] {
+    \expandafter\origfigure\expandafter[H]
+} {
+    \endorigfigure
+}
+
+% --- Bibliography: natbib + bibtex (biber/biblatex unavailable here) ----------
+\usepackage[round]{natbib}
+\bibliographystyle{plainnat}
+
+% --- DOI-aware link splitting (uses xstring) ---------------------------------
+\makeatletter
+\let\href@Orig=\href
+\def\href@Urllike#1#2{\href@Orig{#1}{\begingroup
+    \def\Url@String{#2}\Url@FormatString
+    \endgroup}}
+\def\href@Notdoi#1#2{\def\tempa{#1}\def\tempb{#2}%
+  \ifx\tempa\tempb\relax\href@Urllike{#1}{#2}\else
+  \href@Orig{#1}{#2}\fi}
+\def\href#1#2{%
+  \IfBeginWith{#1}{https://doi.org}%
+  {\href@Urllike{#1}{#2}}{\href@Notdoi{#1}{#2}}}
+\makeatother
+
+% --- Page layout: left metadata margin (reversemp) ---------------------------
+\usepackage[top=3.5cm, bottom=3cm, right=1.5cm, left=1.0cm,
+            headheight=2.2cm, reversemp, includemp, marginparwidth=4.5cm]{geometry}
+
+% --- Default font ------------------------------------------------------------
+\renewcommand\familydefault{\sfdefault}
+
+% --- Style -------------------------------------------------------------------
+\renewcommand{\bibfont}{\small \sffamily}
+\renewcommand{\captionfont}{\small\sffamily}
+\renewcommand{\captionlabelfont}{\bfseries}
+
+% --- Section/SubSection/SubSubSection ----------------------------------------
+\titleformat{\section}
+  {\normalfont\sffamily\Large\bfseries}
+  {}{0pt}{}
+\titleformat{\subsection}
+  {\normalfont\sffamily\large\bfseries}
+  {}{0pt}{}
+\titleformat{\subsubsection}
+  {\normalfont\sffamily\bfseries}
+  {}{0pt}{}
+\titleformat*{\paragraph}
+  {\sffamily\normalsize\bfseries}
+
+% --- Header / Footer ---------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyhead[L]{\hspace{-0.75cm}\includegraphics[width=5.5cm]{joss-logo.png}}
+\fancyhead[C]{}
+\fancyhead[R]{}
+\renewcommand{\footrulewidth}{0.25pt}
+
+\fancyfoot[L]{\parbox[t]{0.98\headwidth}{\footnotesize{\sffamily Malsky et al. (2026). SWAMPE-JAX: A differentiable JAX implementation of the SWAMPE shallow-water model for exoplanet atmospheres. \textit{Journal of Open Source Software}, X(XX), XXXX. \url{https://doi.org/10.21105/joss.0XXXX}}}}
+
+\fancyfoot[R]{\sffamily \thepage}
+\makeatletter
+\let\ps@plain\ps@fancy
+\fancyheadoffset[L]{4.5cm}
+\fancyfootoffset[L]{4.5cm}
+
+% --- Macros ------------------------------------------------------------------
+\definecolor{linky}{rgb}{0.0, 0.5, 1.0}
+\definecolor{orcidlogocol}{HTML}{A6CE39}
+% Lightweight ORCID iD icon (orcidlink.sty is unavailable in this TeX install).
+\newcommand{\orcid}[1]{\href{https://orcid.org/#1}{\mbox{\tikz[baseline=-0.55ex]%
+  \node[circle,fill=orcidlogocol,inner sep=1pt]{\textcolor{white}{\tiny\bfseries iD}};}}}
+
+\newcommand{\ExternalLink}{%
+   \tikz[x=1.2ex, y=1.2ex, baseline=-0.05ex]{%
+       \begin{scope}[x=1ex, y=1ex]
+           \clip (-0.1,-0.1)
+               --++ (-0, 1.2)
+               --++ (0.6, 0)
+               --++ (0, -0.6)
+               --++ (0.6, 0)
+               --++ (0, -1);
+           \path[draw,
+               line width = 0.5,
+               rounded corners=0.5]
+               (0,0) rectangle (1,1);
+       \end{scope}
+       \path[draw, line width = 0.5] (0.5, 0.5)
+           -- (1, 1);
+       \path[draw, line width = 0.5] (0.6, 1)
+           -- (1, 1) -- (1, 0.6);
+       }
+   }
+
+% --- Title / Authors (flush left, per JOSS template; authblk-free) -----------
+\makeatletter
+\patchcmd{\@maketitle}{center}{flushleft}{}{}
+\patchcmd{\@maketitle}{center}{flushleft}{}{}
+\patchcmd{\@maketitle}{\LARGE}{\LARGE\sffamily}{}{}
+\renewcommand{\maketitle}{{%
+  \renewenvironment{tabular}[2][]{\begin{flushleft}}{\end{flushleft}}%
+  \@maketitle}}
+\makeatother
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\IfFileExists{microtype.sty}{\usepackage{microtype}}{}
+
+\IfFileExists{parskip.sty}{\usepackage{parskip}}{%
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt plus 2pt minus 1pt}}
+\setlength{\emergencystretch}{3em}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{0}
+
+% --- Title block -------------------------------------------------------------
+\title{SWAMPE-JAX: A differentiable JAX implementation of the SWAMPE
+       shallow-water model for exoplanet atmospheres}
+
+\author{%
+  \bfseries
+  Isaac Malsky\,\orcid{0000-0003-0217-3880}$^{1}$,\enspace
+  Shreyas Vissapragada\,\orcid{0000-0003-4015-9975}$^{2}$,\enspace
+  Ekaterina Landgren\,\orcid{0000-0001-6029-5216}$^{3}$\\[0.6em]
+  \normalsize\mdseries
+  $^{1}$Jet Propulsion Laboratory, California Institute of Technology, Pasadena, CA 91109, USA\\
+  $^{2}$The Observatories of the Carnegie Institution for Science, Pasadena, CA 91101, USA\\
+  $^{3}$Cooperative Institute for Research in Environmental Sciences, University of Colorado Boulder, Boulder, CO 80309, USA}
+\date{\vspace{-7ex}}
+
+\begin{document}
+\maketitle
+
+% --- Left metadata sidebar ---------------------------------------------------
+\marginpar{
+
+  \begin{flushleft}
+  \sffamily\small
+
+  {\bfseries DOI:} \href{https://doi.org/10.21105/joss.0XXXX}{\color{linky}{10.21105/joss.0XXXX}}
+
+  \vspace{2mm}
+
+  {\bfseries Software}
+  \begin{itemize}
+    \setlength\itemsep{0em}
+    \item \href{https://github.com/openjournals/joss-reviews/issues/XXXX}{\color{linky}{Review}} \ExternalLink
+    \item \href{https://github.com/imalsky/MY_SWAMP}{\color{linky}{Repository}} \ExternalLink
+    \item \href{https://doi.org/10.5281/zenodo.XXXXXXX}{\color{linky}{Archive}} \ExternalLink
+  \end{itemize}
+
+  \vspace{2mm}
+
+  \par\noindent\hrulefill\par
+
+  \vspace{2mm}
+
+  {\bfseries Editor:} Pending \ExternalLink \\
+  \vspace{1mm}
+  {\bfseries Reviewers:}
+  \begin{itemize}
+  \setlength\itemsep{0em}
+  \item Pending
+  \end{itemize}
+  \vspace{2mm}
+
+  {\bfseries Submitted:} 24 June 2026\\
+  {\bfseries Published:} Pending
+
+  \vspace{2mm}
+  {\bfseries License}\\
+  Authors of papers retain copyright and release the work under a Creative Commons Attribution 4.0 International License (\href{http://creativecommons.org/licenses/by/4.0/}{\color{linky}{CC BY 4.0}}).
+
+  \end{flushleft}
+}
+
+% =============================================================================
+\section{Summary}
+% Make this a bit more science first, brief on the numpy/technicals
+% Use fewer ---
+% Specify if its forward and or backward
+% CAREFULLY check the code to make sure the AD stability end-to-end
+\texttt{SWAMPE-JAX} (installed and imported as \texttt{my\_swamp}) is a Python
+package for modeling the two-dimensional dynamics of exoplanet atmospheres. It
+solves the shallow-water equations on the rotating sphere with a
+spectral-transform core --- triangular truncation, Gauss--Legendre quadrature in
+latitude, and fast Fourier transforms in longitude --- advancing absolute
+vorticity, divergence, and a geopotential field forward in time
+\citep{Hack:1992, Langton:2008}. The package is a \texttt{JAX} \citep{jax:2018}
+reimplementation of \texttt{SWAMPE} \citep{Landgren:2022}, an established
+NumPy/SciPy shallow-water model benchmarked for synchronously rotating hot
+Jupiters and sub-Neptunes \citep{Landgren:2023}. \texttt{SWAMPE-JAX} reproduces
+the numerical results of \texttt{SWAMPE} to high precision, but expresses the
+entire time integration as a differentiable, just-in-time-compiled program. As a
+result, the simulated atmosphere --- its geopotential maps, wind fields, and
+derived observables --- is an end-to-end differentiable function of the planet's
+physical parameters and initial conditions, can be compiled to run on GPUs, and
+can be vectorized across batches of parameter combinations in a single call.
+
+\section{Statement of need}
+
+% Whenever a citation is from a class, like 1D models, use eg
+% cite some 3d gpm papers
+% the exploring a parameter grid takes months is not correct, put it in cpu hours
+% double check if they can do non-tidally locked for 2d? Can swampe? can 2d in general
+Interpreting exoplanet atmospheres requires models that bridge the gap between
+fast one-dimensional models \citep{Bell:2018}, which by
+construction cannot resolve longitudinal structure, and three-dimensional
+general circulation models, which capture the full spatial structure but are
+computationally expensive --- a single model can cost hundreds to thousands of
+core-hours, dominated by the coupled radiative transfer, and exploring a
+parameter grid can take months \citep{Kataria:2016, Way:2017}. Two-dimensional
+shallow-water models occupy a middle ground: they capture the
+day--night circulation \citep{Perez-Becker:2013}, equatorial superrotation
+\citep{Showman:2011}, and, in some regimes, atmospheric time-variability
+\citep{Menou:2003} of tidally locked planets, while remaining cheap enough to
+sweep parameter space. \texttt{SWAMPE} made this class of model openly available
+and well documented in Python \citep{Landgren:2022, Landgren:2023}.
+
+
+% I Don't love this para
+% look at the intro for my jax vulcan paper for how to frame this
+% and the things it might buy
+% I don't like the word reexpressing
+A growing set of methods, however, needs not just fast forward simulations but
+their derivatives. Gradient-based optimization, inverse problems that fit
+observed phase curves and eclipse maps, and the training of machine-learning
+emulators all depend on the sensitivity of the simulated state to the underlying
+physical controls --- the radiative and drag timescales, the forcing amplitude,
+the reference geopotential, and the rotation rate. Estimating these sensitivities
+by finite-differencing a NumPy model is slow and noisy, and the cost scales with
+the number of parameters. \texttt{SWAMPE-JAX} removes this bottleneck by
+re-expressing the \texttt{SWAMPE} solver in \texttt{JAX}, so that exact gradients
+are available through automatic differentiation of the full time integration at a
+cost comparable to the forward simulation itself. Fitting a thermal phase curve
+or secondary-eclipse map \citep{Knutson:2007, Rauscher:2018} to recover the
+radiative and drag timescales and the day--night forcing amplitude then becomes a
+single gradient-based optimization rather than a finite-difference loop whose
+cost grows with the number of parameters.
+
+\section{Functionality}
+
+\texttt{SWAMPE-JAX} preserves the public interface and the numerical behavior of
+\texttt{SWAMPE}, so that existing workflows port with minimal changes, while
+adding the capabilities that \texttt{JAX} makes possible:
+
+
+% When you say its validated, quote a number
+% the 2.3 comes out of nowhere. Say like "we find"
+% benchmark the acceleration and vectorization
+% get rid of anything about ML emulators
+% Get rid of pytest regression suite. 
+% Say it a bit more scientfically
+% don't say l2.
+% specify a bit more about how close it is
+\begin{itemize}
+\item \textbf{Differentiability.} The time-stepping loop runs inside
+  \texttt{jax.lax.scan}, which makes the terminal state and any scalar loss
+  differentiable with respect to continuous parameters (the day--night forcing
+  contrast, radiative and drag timescales, mean geopotential, rotation rate,
+  planetary radius, timestep, and hyperdiffusion coefficients) and with respect
+  to explicit initial conditions. Reverse-mode gradients (\texttt{jax.grad}) are
+  validated against centered finite differences; forward-mode (\texttt{jax.jvp},
+  \texttt{jax.jacfwd}) differentiation is also supported. Because reverse-mode
+  cost is independent of the number of parameters, the gradient of a scalar loss
+  with respect to four physical parameters at once costs about $2.3\times$ a
+  single forward integration (at spectral truncation $M=42$), versus the five
+  forward runs a finite-difference estimate would require.
+\item \textbf{Acceleration and vectorization.} The same code is just-in-time
+  compiled with \texttt{jax.jit} and runs unchanged on CPU or GPU.
+  \texttt{jax.vmap} maps the simulator over batches of parameters, enabling large
+  ensemble sweeps and the generation of emulator training sets in a single
+  compiled call.
+\item \textbf{Numerical parity.} For default settings, \texttt{SWAMPE-JAX}
+  reproduces \texttt{SWAMPE}'s spectral transforms, modified-Euler time
+  differencing, Robert--Asselin filtering, sixth-order hyperdiffusion
+  \citep{Gelb:2001}, and Newtonian-relaxation-plus-drag forcing, including the
+  historical conventions of the reference code. A \texttt{pytest} regression
+  suite enforces agreement against stored snapshots from the reference NumPy
+  implementation to fixed absolute tolerances (better than $10^{-10}$ on
+  vorticity and divergence and $5\times10^{-8}$ on the geopotential), and a
+  long-run comparison reproduces the \citet{Williamson:1992} Test~2 steady
+  balanced flow --- one of the two standard spherical shallow-water test cases
+  included in \texttt{SWAMPE-JAX} --- to a relative $L_2$ error below $10^{-11}$
+  in every field over a ten-day integration (\autoref{fig:parity}).
+\end{itemize}
+
+% Get rid of the bonev and Ml refernce stuff
+These features let \texttt{SWAMPE-JAX} serve both as a drop-in replacement for
+\texttt{SWAMPE} and as a differentiable forward model; it is the data generator
+and differentiable reference for a spherical-Fourier-neural-operator emulator of
+sub-Neptune atmospheres \citep{Bonev:2023}, the application that motivated the
+rewrite.
+
+% Don't say long run, say how many days and the exact params
+% redo the 3rd column figures so that there is no gray box
+% quote the errors in the figure caption instead
+% DOn't say test 2. Say the physics
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{parity_comparison.png}
+\caption{Long-run parity between the reference NumPy \texttt{SWAMPE} model and
+\texttt{SWAMPE-JAX}, for the \citet{Williamson:1992} Test~2 steady balanced flow
+integrated for ten days. Columns show the \texttt{SWAMPE} field, the
+\texttt{SWAMPE-JAX} field, and their signed fractional difference for the
+geopotential and the zonal and meridional winds; the two implementations agree to
+a small fraction of a percent everywhere, with relative $L_2$ errors below
+$10^{-11}$ in every field.}
+\label{fig:parity}
+\end{figure}
+
+\section{Relation to SWAMPE and similar tools}
+
+% Change this para a bit
+% saying its reimplemaentation I think is repetitve
+% get rid of it if I say it before
+% search for 2d models similar specifically WITHIN astronomy
+% then say how it relates to tools outside models
+\texttt{SWAMPE-JAX} is an independent reimplementation of \texttt{SWAMPE}
+\citep{Landgren:2022}, not a wrapper around it: the two share an interface and a
+set of physical benchmarks but no source code. Differentiable, GPU-capable
+simulation has reshaped neighboring fields --- machine-learning-accelerated
+computational fluid dynamics \citep{Kochkov:2021}, neural general circulation
+models for Earth weather and climate \citep{Kochkov:2024}, and general spectral
+frameworks such as Dedalus \citep{Burns:2020}. Within exoplanet science,
+\texttt{ExoJAX} \citep{Kawahara:2022} brought automatic differentiation to
+high-resolution radiative transfer and spectral retrieval; \texttt{SWAMPE-JAX} is
+complementary in that it makes the atmospheric \textit{dynamics} differentiable.
+To our knowledge, no openly available exoplanet shallow-water model exposes
+gradients through the full atmospheric integration, and \texttt{SWAMPE-JAX} fills
+that gap for the exoplanet community while retaining the validated physics of
+\texttt{SWAMPE}.
+
+\section{Acknowledgements}
+
+% Don't be repetitive here.
+% DOn't thank landgren cause she's on the paper
+\texttt{SWAMPE-JAX} is a reimplementation of \texttt{SWAMPE} \citep{Landgren:2022};
+we thank Alice Nadeau for co-developing and openly releasing the original model.
+The authors used Claude (Anthropic) to assist with code development, code cleanup,
+and manuscript preparation. We acknowledge the developers of the open-source
+packages on which this work depends, in particular \texttt{JAX} \citep{jax:2018},
+\texttt{NumPy} \citep{Harris:2020}, \texttt{SciPy} \citep{Virtanen:2020}, and
+\texttt{Matplotlib} \citep{Hunter:2007}.
+
+\bibliography{paper}
+
+\end{document}
