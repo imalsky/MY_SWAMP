@@ -176,13 +176,26 @@ def _field_summary(ref: np.ndarray, got: np.ndarray, rel_floor_frac: float) -> D
 def _save_field_comparison_plot(
     ref_fields: Dict[str, np.ndarray],
     got_fields: Dict[str, np.ndarray],
-    metrics: Dict[str, Dict[str, float]],
     rel_floor_frac: float,
     actual_days: float,
     out_path: Path,
 ) -> None:
     """Save field comparison plot."""
     fields = ("eta", "delta", "Phi", "U", "V")
+
+    style_path = Path(__file__).resolve().parent / "science.mplstyle"
+    if style_path.exists():
+        plt.style.use(str(style_path))
+    plt.rcParams.update(
+        {
+            "axes.titlesize": 22,
+            "axes.labelsize": 22,
+            "xtick.labelsize": 13,
+            "ytick.labelsize": 13,
+            "font.size": 14,
+        }
+    )
+
     fig, axes = plt.subplots(
         nrows=len(fields),
         ncols=3,
@@ -216,7 +229,7 @@ def _save_field_comparison_plot(
             vmax=frac_lim,
         )
 
-        ref_ax.set_ylabel(field)
+        ref_ax.set_ylabel(field, fontsize=22)
         for ax in (ref_ax, got_ax, frac_ax):
             ax.set_xticks([])
             ax.set_yticks([])
@@ -225,26 +238,10 @@ def _save_field_comparison_plot(
         fig.colorbar(got_im, ax=got_ax, shrink=0.82)
         fig.colorbar(frac_im, ax=frac_ax, shrink=0.82)
 
-        frac_ax.text(
-            0.02,
-            0.98,
-            (
-                f"rel_l2={metrics[field]['relative_l2_error']:.2e}\n"
-                f"max_frac={metrics[field]['max_fractional_error']:.2e}\n"
-                f"mean_frac={metrics[field]['mean_fractional_error']:.2e}"
-            ),
-            transform=frac_ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=8,
-            color="white",
-            bbox={"boxstyle": "round", "facecolor": "black", "alpha": 0.65, "edgecolor": "none"},
-        )
-
     axes[0, 0].set_title("SWAMPE")
-    axes[0, 1].set_title("MY_SWAMP")
-    axes[0, 2].set_title("Fractional Difference")
-    fig.suptitle(f"SWAMPE vs MY_SWAMP field comparison ({actual_days:.3f} days)")
+    axes[0, 1].set_title("SWAMPE-JAX")
+    axes[0, 2].set_title("Fractional difference")
+    fig.suptitle(f"SWAMPE vs SWAMPE-JAX field comparison ({actual_days:.1f} days)")
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -381,7 +378,6 @@ def main() -> None:
     _save_field_comparison_plot(
         ref_fields=ref_fields,
         got_fields=got_fields,
-        metrics=metrics,
         rel_floor_frac=float(args.rel_floor_frac),
         actual_days=actual_days,
         out_path=plot_path,
