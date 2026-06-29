@@ -66,12 +66,21 @@ MY_SWAMP/
 │   ├── fixtures/*.npz           # SWAMPE-generated reference snapshots
 │   └── test_*.py
 ├── testing/                     # not pytest-collected
-│   ├── benchmark_scan.py
-│   ├── compare_long_run_parity.py
+│   ├── benchmark_scan.py             # forward-scan wall-clock microbenchmark
+│   ├── benchmark_gradient.py         # reverse-mode grad cost + vmap throughput (paper numbers)
+│   ├── compare_long_run_parity.py    # SWAMPE vs my_swamp parity + Figure 1 + speedup
+│   ├── make_sensitivity_figure.py    # Figure 2 (100-day AD sensitivity maps)
 │   ├── generate_reference_parity_fixtures.py
-│   └── long_run_parity_outputs/ # generated artifacts
-└── paper/                       # JOSS paper draft (paper.md, paper.bib, figure)
+│   ├── science.mplstyle
+│   └── long_run_parity_outputs/ # generated artifacts (gitignored)
+└── paper/                       # JOSS paper (LaTeX): paper.tex, paper.bib, figures, Makefile, README
 ```
+
+**The JOSS paper is LaTeX.** `paper/paper.tex` is the canonical, authoritative
+source of the paper — there is no `paper.md`. Build with `cd paper && make`
+(figures regenerate with `make figures`). JOSS's own pipeline ingests Markdown,
+but this project keeps the paper in LaTeX only; a `paper.md` would be generated
+on demand if an upload required it, never maintained as a second source.
 
 The driver `model.py` is the only large file (~1900 lines). If you only have
 time for one read, that's the one. Everything else is small and orthogonal.

@@ -22,9 +22,9 @@ Document version: 2026-06-24
 ## Citation
 
 If you use `my_swamp` in your research, please cite the accompanying software
-paper (in preparation for the Journal of Open Source Software; the draft lives in
-[`paper/paper.md`](paper/paper.md)) together with the original SWAMPE model on
-which this port is based:
+paper (in preparation for the Journal of Open Source Software; the LaTeX source
+lives in [`paper/paper.tex`](paper/paper.tex)) together with the original SWAMPE
+model on which this port is based:
 
 > Landgren, E., & Nadeau, A. (2022). SWAMPE: A Shallow-Water Atmospheric Model in
 > Python for Exoplanets. *Journal of Open Source Software*, 7(80), 4872.
@@ -117,7 +117,7 @@ MY_SWAMP/
 │   └── fixtures/                    # SWAMPE-generated reference snapshots (.npz)
 ├── testing/                         # Benchmarks, fixture generation, parity tooling
 │   └── long_run_parity_outputs/     # Generated artifacts (only summary.json is committed)
-└── paper/                           # JOSS paper draft (paper.md, paper.bib, figure)
+└── paper/                           # JOSS paper (LaTeX: paper.tex, paper.bib, figures, Makefile)
 ```
 
 Reference (NumPy/SciPy) SWAMPE code is not shipped inside this archive. When this README refers to “parity with NumPy SWAMPE”, it means parity with the upstream SWAMPE reference implementation, not a directory contained here.

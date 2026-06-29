@@ -154,8 +154,23 @@ secrets.*
 *.tar.gz
 *.tgz
 
+# === LaTeX build artifacts (paper/) ===
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+
 # === Negations: explicitly keep these committed ===
 # Project-level Claude guide.
 !CLAUDE.md
 # Parity fixtures generated from reference NumPy SWAMPE.
 !unit_tests/fixtures/*.npz
+# JOSS paper figures + logo. The paper is LaTeX (paper.tex is canonical; no .md).
+# Figure 1 (parity) needs the external reference SWAMPE to regenerate, so the
+# rendered figures are committed; the regenerable .npz data and the .pdf are not.
+!paper/*.png
