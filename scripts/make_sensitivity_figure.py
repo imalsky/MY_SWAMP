@@ -39,8 +39,8 @@ the radiative and the drag panels.
 
 Usage
 -----
-    python testing/make_sensitivity_figure.py                # 100 days (paper)
-    python testing/make_sensitivity_figure.py --days 5       # fast smoke test
+    python scripts/make_sensitivity_figure.py                # 100 days (paper)
+    python scripts/make_sensitivity_figure.py --days 5       # fast smoke test
 """
 from __future__ import annotations
 
@@ -130,7 +130,8 @@ def main() -> None:
     parser.add_argument("--days", type=float, default=100.0, help="Integration horizon in days.")
     parser.add_argument("--pert", type=float, default=0.2, help="Fractional step for the FD cross-check.")
     parser.add_argument("--out", type=Path, default=ROOT / "paper" / "temperature_sensitivity_perhour_100d.png")
-    parser.add_argument("--npz", type=Path, default=None, help="Defaults to <out> with .npz suffix.")
+    parser.add_argument("--npz", type=Path, default=ROOT / "data" / "temperature_sensitivity_perhour_100d.npz",
+                        help="Companion data file (regenerable; default: data/).")
     args = parser.parse_args()
 
     tmax = int(round(args.days * DAY / DT)) + 1
@@ -196,18 +197,30 @@ def main() -> None:
     style_path = Path(__file__).resolve().parent / "science.mplstyle"
     if style_path.exists():
         plt.style.use(str(style_path))
+    # Larger type throughout (titles, axis labels, ticks) for a print-legible figure.
     plt.rcParams.update(
-        {"axes.titlesize": 17, "axes.labelsize": 16, "xtick.labelsize": 13,
-         "ytick.labelsize": 13, "font.size": 14}
+        {"axes.titlesize": 21, "axes.labelsize": 20, "xtick.labelsize": 16,
+         "ytick.labelsize": 16, "font.size": 16}
     )
+    # Tight colorbars: a thin bar the same height as its panel, with minimal pad.
+    CBAR_FRACTION = 0.046
+    CBAR_PAD = 0.012
+    CBAR_LABELSIZE = 18
+    CBAR_TICKSIZE = 14
+
+    def _cbar(im, ax, label):
+        cb = fig.colorbar(im, ax=ax, fraction=CBAR_FRACTION, pad=CBAR_PAD)
+        cb.set_label(label, fontsize=CBAR_LABELSIZE)
+        cb.ax.tick_params(labelsize=CBAR_TICKSIZE)
+        return cb
 
     extent = [float(lon_deg.min()), float(lon_deg.max()), float(lat_deg.min()), float(lat_deg.max())]
-    fig, axes = plt.subplots(1, 3, figsize=(18.0, 4.6), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(19.5, 5.0), constrained_layout=True)
 
     # Panel 1: temperature field.
     im0 = axes[0].imshow(T_field, origin="lower", aspect="auto", extent=extent, cmap="inferno")
     axes[0].set_title("Temperature field after %d days" % round(args.days))
-    fig.colorbar(im0, ax=axes[0], shrink=0.9, label="T [K]")
+    _cbar(im0, axes[0], "T [K]")
 
     # Panels 2 & 3: AD sensitivities, diverging map centered on zero + contours.
     for ax, sens, sym, fix in (
@@ -221,11 +234,11 @@ def main() -> None:
                    extent=extent, origin="lower")
         ax.set_title(r"Sensitivity to %s timescale" % ("radiative" if "rad" in fix else "drag")
                      + "\n" + r"$\partial T/\partial %s$ at $%s" % (sym, fix))
-        fig.colorbar(im, ax=ax, shrink=0.9, label="[K per hour]")
+        _cbar(im, ax, "[K per hour]")
 
     for ax in axes:
-        ax.plot(0.0, 0.0, marker="*", color="yellow", markersize=16,
-                markeredgecolor="k", markeredgewidth=0.8, zorder=5)
+        ax.plot(0.0, 0.0, marker="*", color="yellow", markersize=18,
+                markeredgecolor="k", markeredgewidth=1.0, zorder=5)
         ax.set_xlabel("longitude [deg]")
         ax.set_ylabel("latitude [deg]")
         ax.set_xticks([-180, -90, 0, 90, 180])

@@ -23,8 +23,8 @@ is not regenerable.
 
 | Figure | Script | Command |
 |---|---|---|
-| Fig. 1 — SWAMPE vs SWAMPE-JAX parity (`parity_comparison.png`) | `../testing/compare_long_run_parity.py` | `make figures` (or see below) |
-| Fig. 2 — AD sensitivity maps (`temperature_sensitivity_perhour_100d.png`) | `../testing/make_sensitivity_figure.py` | `python ../testing/make_sensitivity_figure.py` |
+| Fig. 1 — SWAMPE vs SWAMPE-JAX parity (`parity_comparison.png`) | `../tests/compare_long_run_parity.py` | `make figures` (or see below) |
+| Fig. 2 — AD sensitivity maps (`temperature_sensitivity_perhour_100d.png`) | `../scripts/make_sensitivity_figure.py` | `python ../scripts/make_sensitivity_figure.py` |
 
 Regenerate both before building (slow: Fig. 1 runs the reference NumPy SWAMPE and
 the JAX model; Fig. 2 runs a 100-day differentiated integration):

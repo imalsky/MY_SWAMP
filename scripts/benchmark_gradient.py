@@ -13,7 +13,7 @@ absolute seconds are machine-dependent and reported with the device/version.
 
 Usage
 -----
-    python testing/benchmark_gradient.py --days 10
+    python scripts/benchmark_gradient.py --days 10
 """
 from __future__ import annotations
 

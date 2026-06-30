@@ -10,9 +10,9 @@ paper.pdf: paper.tex paper.bib parity_comparison.png temperature_sensitivity_per
 # Fig. 1 runs reference NumPy SWAMPE + the JAX model; Fig. 2 runs a 100-day
 # forward-mode-differentiated integration.
 figures:
-	python ../testing/compare_long_run_parity.py --days 10
-	cp ../testing/long_run_parity_outputs/forced_default_100d/field_comparison.png parity_comparison.png
-	python ../testing/make_sensitivity_figure.py --days 100
+	python ../tests/compare_long_run_parity.py --days 100
+	cp ../figures/long_run_parity_outputs/forced_default_100d/field_comparison.png parity_comparison.png
+	python ../scripts/make_sensitivity_figure.py --days 100
 
 clean:
 	rm -f paper.aux paper.bbl paper.blg paper.log paper.out \

@@ -10,11 +10,11 @@ Default behavior
 - Uses the repository's "forced default" parameter set.
 - Runs a 100-day integration on CPU in float64 mode.
 - Executes both legacy `SWAMPE` and `my_swamp`.
-- Writes comparison fields plus error summaries to `testing/long_run_parity_outputs/`.
+- Writes comparison fields plus error summaries to `figures/long_run_parity_outputs/`.
 
 Example
 -------
-    python testing/compare_long_run_parity.py --days 100
+    python tests/compare_long_run_parity.py --days 100
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parents[1]
 REF_ROOT = ROOT.parents[0] / "SWAMPE"
-DEFAULT_OUT_DIR = ROOT / "testing" / "long_run_parity_outputs" / "forced_default_100d"
+DEFAULT_OUT_DIR = ROOT / "figures" / "long_run_parity_outputs" / "forced_default_100d"
 
 
 # Keep parity runs deterministic and aligned with the repository contract.
@@ -52,6 +52,7 @@ from jax import config as jax_config
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 
 jax_config.update("jax_enable_x64", True)
@@ -99,7 +100,7 @@ def _ensure_lpmn_compat() -> None:
 def _parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the long-run parity comparison."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--days", type=float, default=10.0, help="Integration horizon in physical days.")
+    parser.add_argument("--days", type=float, default=100.0, help="Integration horizon in physical days.")
     parser.add_argument("--dt", type=float, default=120.0, help="Timestep in seconds.")
     parser.add_argument("--M", type=int, default=42)
     parser.add_argument("--Phibar", type=float, default=3.0e5)
@@ -180,27 +181,73 @@ def _save_field_comparison_plot(
     actual_days: float,
     out_path: Path,
 ) -> None:
-    """Save field comparison plot."""
-    fields = ("eta", "delta", "Phi", "U", "V")
+    """Save field comparison plot (styled to match the sensitivity figure).
 
-    style_path = Path(__file__).resolve().parent / "science.mplstyle"
+    Each row is one field; the first two columns are the reference and JAX states
+    on a shared symmetric scale, and the third column is the elementwise *percent
+    error* (100 x signed fractional difference). Panels are square, with thin
+    colorbars the same height as their panel and essentially zero pad.
+    """
+    fields = ("eta", "delta", "Phi", "U", "V")
+    # Physical units per field, for the value (SWAMPE / SWAMPE-JAX) colorbars.
+    field_units = {
+        "eta": r"s$^{-1}$",
+        "delta": r"s$^{-1}$",
+        "Phi": r"m$^2$ s$^{-2}$",
+        "U": r"m s$^{-1}$",
+        "V": r"m s$^{-1}$",
+    }
+    # Full field names (with the symbol in parentheses) for the row labels.
+    field_labels = {
+        "eta": r"Absolute vorticity ($\eta$)",
+        "delta": r"Divergence ($\delta$)",
+        "Phi": r"Geopotential ($\Phi$)",
+        "U": r"Zonal wind ($U$)",
+        "V": r"Meridional wind ($V$)",
+    }
+
+    style_path = ROOT / "scripts" / "science.mplstyle"
     if style_path.exists():
         plt.style.use(str(style_path))
+    # Match the sensitivity figure: large, print-legible type throughout.
     plt.rcParams.update(
         {
-            "axes.titlesize": 22,
-            "axes.labelsize": 22,
-            "xtick.labelsize": 13,
-            "ytick.labelsize": 13,
-            "font.size": 14,
+            "axes.titlesize": 21,
+            "axes.labelsize": 20,
+            "xtick.labelsize": 16,
+            "ytick.labelsize": 16,
+            "font.size": 16,
         }
     )
+    # Colorbar as an inset anchored to the axes itself (transAxes), not the subplot
+    # cell. With square panels (box_aspect=1) a divider colorbar would span the full
+    # cell and overshoot the shrunk-to-square panel; anchoring to transAxes makes the
+    # bar exactly the panel's height and flush against its right edge (pad=0). Equal
+    # tops/bottoms also keep the 10^n offset labels aligned across rows.
+    CBAR_TICKSIZE = 13
 
+    def _cbar(im, ax, label=None):
+        cax = inset_axes(
+            ax, width="5%", height="100%", loc="lower left",
+            bbox_to_anchor=(1.0, 0.0, 1.0, 1.0), bbox_transform=ax.transAxes,
+            borderpad=0,
+        )
+        cb = fig.colorbar(im, cax=cax)
+        cb.ax.tick_params(labelsize=CBAR_TICKSIZE)
+        offset = cb.ax.yaxis.get_offset_text()
+        offset.set_horizontalalignment("left")
+        offset.set_position((0.0, 1.0))
+        if label is not None:
+            cb.set_label(label, fontsize=17)
+        return cb
+
+    # Figure aspect is matched to the square-panel grid below (see subplots_adjust)
+    # so the panels fill their cells instead of being centered in taller cells,
+    # which is what otherwise leaves large vertical gaps between rows.
     fig, axes = plt.subplots(
         nrows=len(fields),
         ncols=3,
-        figsize=(12.0, 3.0 * len(fields)),
-        constrained_layout=True,
+        figsize=(13.5, 3.8 * len(fields)),
     )
 
     for row, field in enumerate(fields):
@@ -209,40 +256,44 @@ def _save_field_comparison_plot(
         ref_abs = np.abs(ref)
         ref_max_abs = float(np.max(ref_abs))
         denom_floor = max(rel_floor_frac * max(ref_max_abs, 1.0), np.finfo(np.float64).tiny)
-        frac_diff = (got - ref) / np.maximum(ref_abs, denom_floor)
+        pct_diff = 100.0 * (got - ref) / np.maximum(ref_abs, denom_floor)
 
         value_lim = max(float(np.max(np.abs(ref))), float(np.max(np.abs(got))), np.finfo(np.float64).tiny)
-        frac_lim = max(float(np.max(np.abs(frac_diff))), np.finfo(np.float64).tiny)
+        pct_lim = max(float(np.max(np.abs(pct_diff))), np.finfo(np.float64).tiny)
 
         ref_ax = axes[row, 0]
         got_ax = axes[row, 1]
-        frac_ax = axes[row, 2]
+        pct_ax = axes[row, 2]
 
         ref_im = ref_ax.imshow(ref, origin="lower", aspect="auto", cmap="RdBu_r", vmin=-value_lim, vmax=value_lim)
         got_im = got_ax.imshow(got, origin="lower", aspect="auto", cmap="RdBu_r", vmin=-value_lim, vmax=value_lim)
-        frac_im = frac_ax.imshow(
-            frac_diff,
+        pct_im = pct_ax.imshow(
+            pct_diff,
             origin="lower",
             aspect="auto",
-            cmap="RdBu_r",
-            vmin=-frac_lim,
-            vmax=frac_lim,
+            cmap="PuOr_r",
+            vmin=-pct_lim,
+            vmax=pct_lim,
         )
 
-        ref_ax.set_ylabel(field, fontsize=22)
-        for ax in (ref_ax, got_ax, frac_ax):
+        ref_ax.set_ylabel(field_labels[field], fontsize=17)
+        for ax in (ref_ax, got_ax, pct_ax):
+            ax.set_box_aspect(1)
             ax.set_xticks([])
             ax.set_yticks([])
 
-        fig.colorbar(ref_im, ax=ref_ax, shrink=0.82)
-        fig.colorbar(got_im, ax=got_ax, shrink=0.82)
-        fig.colorbar(frac_im, ax=frac_ax, shrink=0.82)
+        unit = field_units[field]
+        _cbar(ref_im, ref_ax, label=unit)
+        _cbar(got_im, got_ax, label=unit)
+        _cbar(pct_im, pct_ax, label="percent error [%]")
 
     axes[0, 0].set_title("SWAMPE")
     axes[0, 1].set_title("SWAMPE-JAX")
-    axes[0, 2].set_title("Fractional difference")
-    fig.suptitle(f"SWAMPE vs SWAMPE-JAX field comparison ({actual_days:.1f} days)")
-    fig.savefig(out_path, dpi=180)
+    axes[0, 2].set_title("Percent error")
+    fig.suptitle(f"SWAMPE vs SWAMPE-JAX field comparison ({actual_days:.0f} days)",
+                 fontsize=22, y=0.985)
+    fig.subplots_adjust(left=0.03, right=0.97, top=0.93, bottom=0.02, wspace=0.5, hspace=0.1)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -308,6 +359,20 @@ def _run_my_swamp(kwargs: Dict[str, Any]) -> tuple[Dict[str, np.ndarray], float]
     }
     elapsed = time.perf_counter() - t0
     return fields, elapsed
+
+
+def _display_path(p: Path) -> str:
+    """Path relative to the current directory when possible, else absolute.
+
+    The summary is just informational, so it must never crash the run when the
+    output directory lives outside the current working directory (e.g. when the
+    script is invoked from ``paper/`` via ``make figures``).
+    """
+    resolved = p.resolve()
+    try:
+        return str(resolved.relative_to(Path.cwd()))
+    except ValueError:
+        return str(resolved)
 
 
 def _json_ready(value: Any) -> Any:
@@ -385,8 +450,8 @@ def main() -> None:
 
     summary = {
         "comparison": "SWAMPE vs MY_SWAMP long-run field comparison",
-        "output_dir": str(out_dir.resolve().relative_to(Path.cwd())),
-        "plot_png": str(plot_path.resolve().relative_to(Path.cwd())),
+        "output_dir": _display_path(out_dir),
+        "plot_png": _display_path(plot_path),
         "days_requested": float(args.days),
         "days_actual": actual_days,
         "dt_seconds": float(args.dt),

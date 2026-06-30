@@ -17,7 +17,7 @@ Working on this codebase as an AI assistant or human contributor? Read
 covering the locked parity contract, differentiability rules, validation
 commands, and common pitfalls.
 
-Document version: 2026-06-24
+Document version: 2026-06-30
 
 ## Citation
 
@@ -115,8 +115,11 @@ MY_SWAMP/
 │       └── autodiff_utils.py        # Forward-mode utilities (JVP chunking)
 ├── unit_tests/                      # Pytest suite (see §13 for the test matrix)
 │   └── fixtures/                    # SWAMPE-generated reference snapshots (.npz)
-├── testing/                         # Benchmarks, fixture generation, parity tooling
-│   └── long_run_parity_outputs/     # Generated artifacts (only summary.json is committed)
+├── tests/                           # Integration tests (long-run parity vs SWAMPE; not pytest-collected)
+├── scripts/                         # Reproducibility generators (figures, benchmarks, fixtures)
+├── retrieval/                       # Differentiable SWAMP -> phase-curve retrieval (BlackJAX SMC)
+├── data/                            # Regenerable .npz data (gitignored)
+├── figures/                         # Generated figures + parity output bundles (gitignored)
 └── paper/                           # JOSS paper (LaTeX: paper.tex, paper.bib, figures, Makefile)
 ```
 
@@ -723,7 +726,7 @@ working.
 To lint the source and test directories:
 
 ```bash
-ruff check src unit_tests testing
+ruff check src unit_tests tests scripts
 ```
 
 The test suite lives under `unit_tests/` and covers:
@@ -751,7 +754,7 @@ This is the main tool for checking that `my_swamp` stays numerically close to th
 Run it from the repository root:
 
 ```bash
-JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/compare_long_run_parity.py --days 100
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python tests/compare_long_run_parity.py --days 100
 ```
 
 What it does:
@@ -761,19 +764,19 @@ What it does:
 - Saves `comparison_fields.npz` with the SWAMPE fields, MY_SWAMP fields, and absolute error arrays for `eta`, `delta`, `Phi`, `U`, and `V`.
 - Generates `field_comparison.png` — a grid of side-by-side maps showing the SWAMPE fields, MY_SWAMP fields, and signed fractional differences for each field.
 
-All output lands in `testing/long_run_parity_outputs/forced_default_100d/` by default.
+All output lands in `figures/long_run_parity_outputs/forced_default_100d/` by default.
 
 Key options:
 
 ```bash
 # Change integration horizon or timestep
-python testing/compare_long_run_parity.py --days 200 --dt 600
+python tests/compare_long_run_parity.py --days 200 --dt 600
 
 # Run an idealized test case instead of forced mode (1 or 2)
-python testing/compare_long_run_parity.py --days 50 --test 1
+python tests/compare_long_run_parity.py --days 50 --test 1
 
 # Write outputs to a custom directory
-python testing/compare_long_run_parity.py --days 100 --out-dir /tmp/parity_check
+python tests/compare_long_run_parity.py --days 100 --out-dir /tmp/parity_check
 ```
 
 The script requires that the SWAMPE reference package is importable. It looks for it at `../SWAMPE` relative to the `MY_SWAMP` root.
@@ -785,7 +788,7 @@ The script requires that the SWAMPE reference package is importable. It looks fo
 The regression tests in `test_parity_reference_regression.py` compare against stored `.npz` fixtures generated from the NumPy SWAMPE reference. If you change the numerics intentionally, regenerate them:
 
 ```bash
-JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/generate_reference_parity_fixtures.py
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python scripts/generate_reference_parity_fixtures.py
 ```
 
 What it does:
@@ -800,31 +803,31 @@ This script requires the SWAMPE reference package at `../SWAMPE`. Commit the upd
 
 ### 13d. Performance Benchmarking (`benchmark_scan.py`)
 
-The benchmark harness in `testing/benchmark_scan.py` measures wall-clock time for `run_model_scan_final` across multiple timed runs after a JIT warmup. It prints backend info (device, x64 status), compile time, and per-run statistics including mean, median, min, max, and per-step median time in milliseconds.
+The benchmark harness in `scripts/benchmark_scan.py` measures wall-clock time for `run_model_scan_final` across multiple timed runs after a JIT warmup. It prints backend info (device, x64 status), compile time, and per-run statistics including mean, median, min, max, and per-step median time in milliseconds.
 
 Basic usage:
 
 ```bash
-python testing/benchmark_scan.py --M 42 --tmax 300 --timed-runs 3
+python scripts/benchmark_scan.py --M 42 --tmax 300 --timed-runs 3
 ```
 
 Key options:
 
 ```bash
 # Run on GPU (if available)
-python testing/benchmark_scan.py --backend gpu --require-gpu
+python scripts/benchmark_scan.py --backend gpu --require-gpu
 
 # Higher resolution
-python testing/benchmark_scan.py --M 63 --tmax 500
+python scripts/benchmark_scan.py --M 63 --tmax 500
 
 # Forced mode with diffusion
-python testing/benchmark_scan.py --M 42 --tmax 300 --forcflag true --diffflag true
+python scripts/benchmark_scan.py --M 42 --tmax 300 --forcflag true --diffflag true
 
 # Adjust warmup and timed run counts
-python testing/benchmark_scan.py --warmup-runs 2 --timed-runs 5
+python scripts/benchmark_scan.py --warmup-runs 2 --timed-runs 5
 
 # Fail fast if x64 is not enabled
-python testing/benchmark_scan.py --require-x64
+python scripts/benchmark_scan.py --require-x64
 ```
 
 ---
@@ -872,6 +875,6 @@ python testing/benchmark_scan.py --require-x64
 | Continuation round-trip test | `unit_tests/test_continuation_roundtrip.py` |
 | Validation tests for invalid input | `unit_tests/test_invalid_input.py` |
 | `vmap` ensemble smoke test | `unit_tests/test_vmap_smoke.py` |
-| Long-run parity vs NumPy SWAMPE | `testing/compare_long_run_parity.py` |
-| Reference fixture generation | `testing/generate_reference_parity_fixtures.py` |
-| Performance benchmark | `testing/benchmark_scan.py` |
+| Long-run parity vs NumPy SWAMPE | `tests/compare_long_run_parity.py` |
+| Reference fixture generation | `scripts/generate_reference_parity_fixtures.py` |
+| Performance benchmark | `scripts/benchmark_scan.py` |

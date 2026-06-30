@@ -65,14 +65,21 @@ MY_SWAMP/
 │   ├── conftest.py              # x64 + backend setup
 │   ├── fixtures/*.npz           # SWAMPE-generated reference snapshots
 │   └── test_*.py
-├── testing/                     # not pytest-collected
+├── tests/                       # integration tests (not pytest-collected; minutes-long)
+│   └── compare_long_run_parity.py    # SWAMPE vs my_swamp parity + Figure 1 + speedup
+├── scripts/                     # reproducibility generators (not pytest-collected)
 │   ├── benchmark_scan.py             # forward-scan wall-clock microbenchmark
 │   ├── benchmark_gradient.py         # reverse-mode grad cost + vmap throughput (paper numbers)
-│   ├── compare_long_run_parity.py    # SWAMPE vs my_swamp parity + Figure 1 + speedup
 │   ├── make_sensitivity_figure.py    # Figure 2 (100-day AD sensitivity maps)
 │   ├── generate_reference_parity_fixtures.py
-│   ├── science.mplstyle
-│   └── long_run_parity_outputs/ # generated artifacts (gitignored)
+│   └── science.mplstyle
+├── retrieval/                   # downstream app: differentiable SWAMP -> phase-curve retrieval
+│   ├── run_smc.py                    # BlackJAX adaptive tempered SMC (gradient-informed kernel)
+│   ├── plot_smc.py                   # posterior / diagnostics plots
+│   ├── run.sh                        # SLURM launcher
+│   └── README.md
+├── data/                        # regenerable .npz inputs/outputs (gitignored)
+├── figures/                     # generated figures + parity output bundles (gitignored)
 └── paper/                       # JOSS paper (LaTeX): paper.tex, paper.bib, figures, Makefile, README
 ```
 
@@ -92,7 +99,7 @@ time for one read, that's the one. Everything else is small and orthogonal.
 These behaviors are **deliberately** preserved from reference NumPy SWAMPE,
 including its historical quirks. Each item has a unit test in
 `unit_tests/test_parity_quirks.py`. If you change one, regenerate the
-fixtures (`testing/generate_reference_parity_fixtures.py`) and bump the spec
+fixtures (`scripts/generate_reference_parity_fixtures.py`) and bump the spec
 section in this file.
 
 1. **Modified-Euler `Phi`/`Delta` use the effective `/4` coefficient**
@@ -218,17 +225,17 @@ JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 pytest -q -m parity
 JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=0 JAX_ENABLE_X64=0 pytest -q -m parity
 
 # Lint:
-ruff check src unit_tests testing
+ruff check src unit_tests tests scripts
 
 # Long-run parity vs reference SWAMPE (requires ../SWAMPE/ to exist;
 # not part of pytest because it takes minutes):
-JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/compare_long_run_parity.py --days 100
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python tests/compare_long_run_parity.py --days 100
 
 # Regenerate parity fixtures (after a deliberate numerics change):
-JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python testing/generate_reference_parity_fixtures.py
+JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python scripts/generate_reference_parity_fixtures.py
 
 # Benchmark:
-python testing/benchmark_scan.py --M 42 --tmax 300 --timed-runs 3
+python scripts/benchmark_scan.py --M 42 --tmax 300 --timed-runs 3
 ```
 
 Current test count: 36. Suite runtime: ~25–40s on CPU.
@@ -243,7 +250,7 @@ Current test count: 36. Suite runtime: ~25–40s on CPU.
 - `parity` — strict regression checks against fixtures generated from
   reference NumPy SWAMPE. Gated on x64 mode by `_assert_x64_enabled`.
 - `perf` — benchmark/perf-oriented checks. Reserved; not currently used
-  inside pytest (the benchmark script in `testing/` is run separately).
+  inside pytest (the benchmark scripts in `scripts/` are run separately).
 
 Tests with no marker run in both default and parity-gated invocations.
 
@@ -338,9 +345,9 @@ When you make a change that affects locked numerical behavior:
 2. Update / add the appropriate `test_parity_quirks.py` entry.
 3. Re-run `pytest -q -m parity` and `pytest -q -m smoke`.
 4. If the change invalidates the stored fixtures, regenerate them via
-   `testing/generate_reference_parity_fixtures.py` — and check in the new
+   `scripts/generate_reference_parity_fixtures.py` — and check in the new
    `.npz` files.
-5. Re-run `testing/compare_long_run_parity.py --days 100` and confirm
+5. Re-run `tests/compare_long_run_parity.py --days 100` and confirm
    `Phi` agrees with reference SWAMPE to better than `~1e-6` max-fractional.
 6. Update §3 in this file if the locked contract changed.
 
@@ -540,3 +547,163 @@ that's a contract violation — flag it.
 - **Don't change the `SWAMPE_JAX_ENABLE_X64` env-var name** without
   updating `enforce_no_tpu_backend()` in the emulator, or float64
   parity will silently degrade to float32 during data generation.
+
+---
+
+## 13. Future improvements (researched roadmap)
+
+These are the highest-leverage, AD-compatible techniques to consider, drawn
+from a survey of the differentiable Earth-system-modeling literature
+(NeuralGCM/Dinosaur, SpeedyWeather.jl, JCM, and the differentiable-4D-Var
+adjoint work). They are *researched, not yet implemented*. Each notes whether
+it touches the §3 locked-parity contract. The forward-model items (13.2, 13.3)
+must be **opt-in modes**; the AD-infrastructure item (13.1) is parity-neutral.
+
+Rationale framing: the package's purpose downstream is gradient-based Bayesian
+retrieval (`retrieval/run_smc.py`) of hot-Jupiter dynamical parameters from a
+phase curve, so "helps" means *cheaper/lower-memory gradients* or *cheaper
+forward passes for the inner loop of SMC/HMC*.
+
+### 13.1 Checkpointed reverse-mode + accumulate the loss in the scan carry
+
+**What.** Wrap the scan body (one time step) in `jax.checkpoint` (rematerialize)
+so reverse-mode re-forwards from sparse checkpoints instead of taping every
+step — reverse-mode memory drops from `O(tmax)` to `O(√tmax)` with one nesting
+level (Dinosaur's drop-in `nested_checkpoint_scan` is ~30 lines). Separately,
+because a phase curve is a *time series*, the likelihood depends on the whole
+trajectory: accumulate the running observation misfit / log-likelihood **inside
+the scan carry** so the scan returns a scalar loss while storing only the carry.
+
+**Why it helps.** This removes the exact constraint that currently forces
+forward-mode JVPs and `return_history=False` (see §4, §9 "memory cliff"): even a
+terminal-state-only reverse-mode `lax.scan` still tapes per-step residuals
+(`O(tmax·J·I)`), which is what OOMs. With checkpointing, reverse-mode becomes
+affordable, and reverse-mode cost is ~constant in the number of parameters — so
+it is the right tool for the high-dimensional initial-`Phi`-field retrieval
+(forward-mode there would cost one pass *per pixel*). The directly analogous
+rotating shallow-water adjoint in DJ4Earth OOMs at ~4,500 steps without
+checkpointing and stays flat in memory with √N checkpointing (and is *faster*
+than naive taping past ~1,000 steps).
+
+**AD.** Built from `jax.checkpoint` + `lax.scan`; AD-correct by construction,
+forward numerics bit-identical (remat only recomputes on the backward pass).
+Cost is ~1 extra forward recompute (memory↔compute trade); pick checkpoint
+period ≈ `√tmax`.
+
+**Parity.** **Neutral** — does not change forward results; can be the default
+AD path without touching §3.
+
+**Effort.** Small–medium.
+
+**References.**
+- Dinosaur `nested_checkpoint_scan` / `trajectory_from_step`:
+  <https://github.com/neuralgcm/dinosaur> (`dinosaur/time_integration.py`).
+- NeuralGCM (rollout curriculum / BPTT through long rollouts), Kochkov et al.
+  2024, *Nature*: <https://doi.org/10.1038/s41586-024-07744-y> (Appendix G.2).
+- MITgcm-AD v2 (Revolve / binomial checkpointing at O(1e4) steps), arXiv:2401.11952:
+  <https://arxiv.org/abs/2401.11952>.
+- DJ4Earth / `ShallowWaters.jl` (rotating-SWE adjoint, √N checkpointing,
+  gradient validation to RMSE ~1e-12): <https://doi.org/10.1029/2025MS005615>.
+- Loss-in-the-carry / windowed misfit accumulation — Backprop-4DVar (Solvik et al.,
+  *JAMES* 2024): <https://doi.org/10.1029/2024MS004608> (arXiv:2408.02767);
+  auto-differentiable data assimilation, arXiv:2603.20891.
+- `jax.checkpoint`/`remat`: <https://docs.jax.dev/en/latest/_autosummary/jax.checkpoint.html>.
+
+### 13.2 Robert–Asselin–Williams (RAW) filter
+
+**What.** A one-line upgrade to the classic Robert–Asselin time filter we
+already apply for `t>2` (§3 item 10). Let `d = w_{i+1} − 2·v_i + u_{i-1}` be the
+RA displacement, `ν` the RA coefficient, `α` the Williams parameter:
+
+```
+u_i     = v_i     + (ν·α/2)·d      # current step  (this is classic RA when α=1)
+v_{i+1} = w_{i+1} − (ν·(1−α)/2)·d  # NEW: same displacement, opposite sign, applied to next step
+```
+
+The Williams term restores conservation of the three-time-level mean.
+SpeedyWeather defaults: `ν=0.1`, `α=0.53` (Williams' optimum); `α=1` recovers
+classic RA exactly.
+
+**Why it helps.** Classic RA degrades leapfrog amplitude accuracy to first order
+(`O(dt)`) and artificially damps the *physical* mode, not just the computational
+one — a real energy sink. RAW restores third-order amplitude accuracy and removes
+the physical-mode damping, so long integrations are more accurate and lose less
+energy → cleaner gradients for retrieval. Amezcua, Kalnay & Williams (2011) showed
+measurable forecast/climatology improvements on SPEEDY, which shares SWAMPE's
+lineage.
+
+**AD.** Trivial — three elementwise spectral-array ops; fully differentiable.
+
+**Parity.** **Safe opt-in.** With `α=1` the update is bit-identical to the
+current classic-RA default, so parity holds automatically when the new mode is
+off. Add a parity test asserting `α=1` reproduces the existing fixtures.
+
+**Effort.** Small (one extra line + an `α` flag in `RunFlags`/`Static`).
+
+**References.**
+- Williams (2009), *Mon. Wea. Rev.*: <https://doi.org/10.1175/2009MWR2724.1>.
+- Williams (2011), "...an improvement to the RAW filter in semi-implicit
+  integrations", *Mon. Wea. Rev.*: <https://doi.org/10.1175/2010MWR3601.1>.
+- Amezcua, Kalnay & Williams (2011), RAW applied to SPEEDY:
+  <https://doi.org/10.1175/2010MWR3530.1>.
+- SpeedyWeather.jl (ships RAW; defaults `ν=0.1`, `α=0.53`), JOSS:
+  <https://doi.org/10.21105/joss.06323>.
+
+### 13.3 Semi-implicit gravity-wave mode (+ exponential hyperdiffusion)
+
+**What.** Treat only the *linear* gravity-wave coupling implicitly; vorticity is
+untouched (the linear operator is zero there). Because `∇²` is diagonal in
+spectral space, the implicit "solve" is a closed-form scalar per spherical-
+harmonic degree `l` — no matrix, no iteration (`Φ̄ = Phibar`, `ξ = 2·α·dt`):
+
+```
+S_l   = 1 / (1 + ξ²·Φ̄·l(l+1)/a²)
+δ_new = S_l·(δ* − dt·∇²Φ*)
+Φ_new = S_l·(Φ* − dt·Φ̄·δ*)
+```
+
+Pair it with **exponential (integrating-factor) hyperdiffusion** applied per
+wavenumber, `x_l → x_l·exp(−scale·|λ_l|^n)` with `n=3` (the existing ∇⁶ order),
+which is the *exact* solution of the linear hyperdiffusion operator over a step
+and is unconditionally stable.
+
+**Why it helps.** The current explicit `dt` is throttled by the gravity-wave
+speed `√(Φ̄)`, which in the hot-Jupiter regime is far faster than the wind.
+Treating exactly those terms implicitly lets `dt` grow toward the *advective*
+CFL — Dinosaur, SpeedyWeather, and JCM all report 1–2 orders of magnitude larger
+`dt`. Fewer `lax.scan` steps → proportionally cheaper forward passes for the
+SMC/HMC inner loop **and** proportionally less reverse-mode memory/compute
+(compounds with 13.1). The exponential hyperdiffusion is required so diffusion
+does not become the new `dt` bottleneck once gravity waves are implicit.
+`Phibar` is already a parameter (§5.2), so the linearization reference is free.
+
+**AD.** Clean — closed-form per-mode scalar arithmetic and an elementwise `exp`
+factor; smooth in `dt`, `Phibar`, `a`. **No `custom_vjp` needed** (Dinosaur's
+production dycore contains zero custom gradients). If `dt` is itself a
+differentiated parameter, the precomputed `S_l`/diffusion factors depend on it
+smoothly and AD handles it — just recompute them inside the step, not as frozen
+constants.
+
+**Parity.** **Opt-in mode only** (e.g. `time_stepping="semi_implicit"`); it
+changes the time discretization, so it is not bit-identical to NumPy SWAMPE. The
+explicit modified-Euler scheme stays the locked default (§3). The exponential
+hyperdiffusion likewise changes the filter form → opt-in, paired with this mode.
+
+**Effort.** Medium (split the linear `δ`/`Φ` terms, precompute the per-`l` `S_l`,
+insert the correction before the step; ~tens of lines).
+
+**References.**
+- Hoskins & Simmons (1975), spectral semi-implicit shallow water,
+  *Q. J. R. Meteorol. Soc.*: <https://doi.org/10.1002/qj.49710142918>.
+- Dinosaur shallow-water core (`ShallowWaterEquations.implicit_terms` /
+  `implicit_inverse`): <https://github.com/neuralgcm/dinosaur>
+  (`dinosaur/shallow_water.py`, `dinosaur/filtering.py`); NeuralGCM Appendix E,
+  Kochkov et al. 2024: <https://doi.org/10.1038/s41586-024-07744-y>.
+- SpeedyWeather.jl numerics (per-`l` semi-implicit solve, implicit
+  hyperdiffusion): <https://doi.org/10.21105/joss.06323> and
+  <https://speedyweather.github.io/SpeedyWeather.jl/dev/>.
+- IMEX SIL3 single-step alternative — Whitaker & Kar (2013), *Mon. Wea. Rev.*:
+  <https://doi.org/10.1175/MWR-D-13-00132.1>.
+- Exponential/integrating-factor hyperdiffusion reference implementation:
+  `../torch-harmonics-main/torch_harmonics/examples/shallow_water_equations.py`
+  (precomputed `hyperdiff = exp(...)`, applied each step).

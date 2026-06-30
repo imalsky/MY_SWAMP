@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "my-swamp"
 dynamic = ["version"]
 description = "MY_SWAMP: JAX port + reference implementation of SWAMPE"
-readme = "readme.md"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "BSD-3-Clause"
 authors = [
@@ -61,6 +61,7 @@ where = ["src"]
 version = { attr = "my_swamp._version.__version__" }
 
 [tool.pytest.ini_options]
+testpaths = ["unit_tests"]
 markers = [
     "smoke: fast sanity checks suitable for every commit.",
     "parity: strict regression checks against SWAMPE reference fixtures.",
@@ -69,8 +70,13 @@ markers = [
 
 [tool.ruff]
 target-version = "py310"
-src = ["src", "unit_tests", "testing"]
-extend-exclude = ["dist"]
+src = ["src", "unit_tests", "tests", "scripts"]
+# retrieval/ is restored research/HPC application code with its own domain
+# conventions (e.g. I/J grid indices); it is not gated on the package lint.
+# Notebooks (*.ipynb) follow normal Colab/Jupyter cell idioms (semicolon-joined
+# statements, imports after env-var setup in the same cell) that don't match
+# the package's .py style; they are not gated on the package lint either.
+extend-exclude = ["dist", "retrieval", "*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

@@ -150,12 +150,11 @@
 \author{%
   \bfseries
   Isaac Malsky\,\orcid{0000-0003-0217-3880}$^{1}$,\enspace
-  Shreyas Vissapragada\,\orcid{0000-0003-4015-9975}$^{2}$,\enspace
-  Ekaterina Landgren\,\orcid{0000-0001-6029-5216}$^{3}$\\[0.6em]
+  Tiffany Kataria\,\orcid{0000-0003-3759-9080}$^{1}$,\enspace
+  Ekaterina Landgren\,\orcid{0000-0001-6029-5216}$^{2}$\\[0.6em]
   \normalsize\mdseries
   $^{1}$Jet Propulsion Laboratory, California Institute of Technology, Pasadena, CA 91109, USA\\
-  $^{2}$The Observatories of the Carnegie Institution for Science, Pasadena, CA 91101, USA\\
-  $^{3}$Cooperative Institute for Research in Environmental Sciences, University of Colorado Boulder, Boulder, CO 80309, USA}
+  $^{2}$Cooperative Institute for Research in Environmental Sciences, University of Colorado Boulder, Boulder, CO 80309, USA}
 \date{\vspace{-7ex}}
 
 \begin{document}
@@ -207,207 +206,228 @@
 % =============================================================================
 \section{Summary}
 
-The vast majority of exoplanets with measurable atmospheres are spin-synchronized:
-one hemisphere is constantly irradiated, and the other sees eternal night. This
-permanent imbalance in thermal forcing, coupled with rotation, makes the
-atmospheres we can characterize inherently multidimensional \citep{Showman:2009,
-Kataria:2016}. Because exoplanets are observed almost entirely through indirect,
-disk-integrated measurements, recovering this structure rests on atmospheric
-models. One-dimensional models are fast and sweep large parameter ranges but
-cannot represent variation with longitude; three-dimensional general circulation
-models resolve the full circulation but at a computational cost that makes wide
-parameter studies expensive. Two-dimensional shallow-water models fill the gap:
-they capture the day--night circulation and equatorial jets of close-in planets
-while remaining cheap enough to explore parameter space and isolate the dynamical
-mechanisms at work.
+The majority of exoplanets with measurable atmospheres are spin-synchronized: one
+hemisphere is constantly irradiated, while the other never receives direct
+starlight. This permanent imbalance in thermal forcing, coupled with rotation,
+makes these exoplanet atmospheres inherently multidimensional \citep{Showman:2009}. 
+Because exoplanets are observed almost entirely through indirect,
+disk-integrated measurements, characterizing these atmospheres relies on
+comparisons to forward models.
 
-\texttt{SWAMPE-JAX} (installed and imported as \texttt{my\_swamp}) is a Python
-package for modeling the two-dimensional dynamics of exoplanet atmospheres. It
-solves the shallow-water equations on the rotating sphere using the
-spectral-transform method, advancing absolute vorticity, divergence, and
-geopotential forward in time, and is benchmarked for synchronously rotating hot
-Jupiters and sub-Neptunes. \texttt{SWAMPE-JAX} is a \texttt{JAX} \citep{jax:2018}
-reimplementation of \texttt{SWAMPE} \citep{Landgren:2022}, which it reproduces to
-high precision. Its new capability is differentiability: the simulated
-geopotential and wind fields, and any quantity derived from them, can be
-differentiated with respect to the planet's physical parameters and initial
-conditions through automatic differentiation. The same code is just-in-time
-compiled, runs on CPU or GPU, and can be vectorized over batches of parameters in
-a single call. These gradients give the exact sensitivity of the simulated
-atmosphere to the forcing mechanisms and timescales that shape it, at a cost
-comparable to a single forward run.
+\texttt{SWAMPE-JAX} is a Python package for modeling the two-dimensional dynamics
+and forcing timescales of exoplanet atmospheres. It solves the shallow-water
+equations for a rotating sphere using the spectral-transform method. It advances
+absolute vorticity, divergence, and geopotential forward in time, and targets
+synchronously rotating exoplanets across the hot-Jupiter-to-sub-Neptune regime
+\citep{Landgren:2022, Landgren:2023}.
+\texttt{SWAMPE-JAX} is a \texttt{JAX} \citep{jax:2018} reimplementation of
+\texttt{SWAMPE} \citep{Landgren:2022}, and the two codes agree to high precision.
+
+\texttt{SWAMPE-JAX} offers two improvements over the original code. 
+First, \texttt{SWAMPE-JAX} is differentiable: the simulated geopotential and wind fields,
+and any quantity derived from them, can be differentiated with respect to the
+planet's input physical parameters through automatic differentiation. This novel
+capability returns the sensitivity of the simulated atmosphere to the
+mechanisms that shape it,
+enabling sensitivity analysis and gradient-based parameter studies.
+Second, \texttt{SWAMPE-JAX} is roughly $30\times$ faster than the original \texttt{SWAMPE}
+on a single CPU core, and between ${\sim}500\times$ and ${\sim}6{,}700\times$ faster
+on a GPU (depending on batching).
 
 \section{Statement of need}
+Observations increasingly reveal the intrinsic coupling of radiative and dynamical 
+processes in exoplanet atmospheres.
+However, our ability to interpret observations with numerical simulations
+is limited by computational constraints.
+There is therefore a pressing need for a multidimensional
+forward model fast enough to sweep parameter space and help determine the physical drivers
+that shape exoplanet atmospheres.
 
-Interpreting these atmospheres requires forward models, and existing ones force a
-choice between speed and physical fidelity. One-dimensional radiative--convective
-models are cheap and retain vertical thermal structure but cannot resolve
-variation with longitude, and so cannot self-consistently link the forcing to the
-day--night circulation that shapes the data. Three-dimensional general circulation models
-\citep[e.g.,][]{Showman:2009, Kataria:2016, Carone:2020} capture the full spatial
-structure but are far too expensive to explore widely: converging one deep
-hot-Jupiter model costs tens of thousands of CPU-hours \citep{Roth:2024}, and a
-single sub-Neptune takes months of wall-clock time \citep{Wang:2020}. There is a pressing need for a multidimensional forward model
-fast enough to sweep parameter space and isolate the causal drivers that shape
-exoplanet atmospheres.
+One-dimensional models remain a critical tool for atmospheric characterization.
+Fast, parametric retrieval frameworks built on these models have revealed the composition,
+temperature structure, and cloud properties of exoplanets from observations
+\citep[e.g.,][]{Madhusudhan:2009, Sing:2016, Rustamkulov:2023}.
+However, they cannot capture the transport and feedbacks between
+radiation and dynamics that shape atmospheric structure \citep{Madhusudhan:2019}.
 
-Two-dimensional shallow-water models occupy this middle ground. By representing
-the atmosphere as a single active layer, they trade away vertical structure but
-capture the day--night circulation \citep{Perez-Becker:2013}, equatorial
-superrotation \citep{Showman:2011}, and, in some regimes, atmospheric
-time-variability \citep{Menou:2003}, while remaining cheap enough to sweep
-parameter space and to isolate how the radiative and drag timescales set the
-balance between external forcing and atmospheric transport \citep{Komacek:2016}.
-The framework is not restricted to synchronous rotation, since the rotation rate
-is a free parameter; tidal locking enters only through the standard day--night
-Newtonian-relaxation forcing, which fixes the radiative-equilibrium hot spot to a
-permanent substellar point (the fixed-substellar idealization of
-\citealt{Landgren:2023}). \texttt{SWAMPE} made this class of model openly
-available and well documented in Python \citep{Landgren:2022, Landgren:2023}.
+Three-dimensional general
+circulation models \citep[e.g.,][]{Showman:2009, Kataria:2016, Carone:2020}
+capture the full spatial structure of exoplanet atmospheres, but 
+are extremely computationally demanding.
+One atmospheric simulation can cost tens of thousands of CPU-hours
+\citep{Roth:2024}, and months of real-world wall-clock time
+\citep{Wang:2020}. This dramatically restricts the type of investigations that
+can be performed with this class of models.
 
-Isolating these drivers, however, requires not just fast forward simulations but
-their derivatives. Sensitivity analysis and gradient-based parameter studies both
-depend on how the simulated state responds to the underlying physical controls:
-the radiative and drag timescales, the day--night forcing amplitude, the reference
-geopotential, and the rotation rate. Obtaining these derivatives from a
-traditional NumPy model means perturbing each parameter, rerunning, and
-differencing the results, at a cost of one forward run per parameter and with
-finite-difference noise. \texttt{SWAMPE-JAX} removes this bottleneck: because the
-solver is written in \texttt{JAX}, automatic differentiation applies the chain
-rule across the entire time integration and returns exact gradients at a cost
-comparable to a single forward run, independent of the number of parameters. The
-same gradients resolve how each region of the simulated atmosphere responds to the
-forcing timescales (\autoref{fig:sensitivity}), turning a finite-difference loop
-whose cost grows with the number of parameters into a single differentiation.
+Two-dimensional shallow-water models can sweep the broad range of conditions
+\textit{a priori} possible for exoplanet atmospheres, but at a fraction of the 
+computational cost of a 3D GCM.
+By representing the atmosphere as a single active layer, they can capture 
+day--night circulation patterns \citep[e.g.,][]{Perez-Becker:2013, Showman:2011},
+equatorial jet formation \citep{Showman:2011}, and global temperature structures.
+Simulated phase curves and eclipse maps from these models can then be used to
+infer the underlying physical structure of these planets. For example, the
+hotspot offset \citep{Knutson:2007, Penn:2017}, or day--night temperature
+differences \citep{Perez-Becker:2013, Komacek:2016}.
 
 \section{Functionality}
 
 \texttt{SWAMPE-JAX} preserves the public interface and the numerical behavior of
 \texttt{SWAMPE}, so that existing workflows port with minimal changes, while
-adding the capabilities that \texttt{JAX} makes possible:
+adding the capabilities that \texttt{JAX} makes possible.
 
-\begin{itemize}
-\item \textbf{Differentiability.} The time-stepping loop runs inside
-  \texttt{jax.lax.scan}, which makes the terminal state and any scalar loss
-  differentiable with respect to the continuous physical parameters (day--night
-  forcing contrast, radiative and drag timescales, mean geopotential, rotation
-  rate, planetary radius, timestep, and hyperdiffusion coefficients) and with
-  respect to explicit initial conditions. Reverse-mode gradients
-  (\texttt{jax.grad}) are validated against centered finite differences;
-  forward-mode differentiation (\texttt{jax.jvp}, \texttt{jax.jacfwd}) is also
-  supported. Because reverse-mode cost is independent of the number of
-  parameters, we find that the gradient of a scalar loss with respect to four
-  physical parameters costs about $2.0\times$ a single forward integration
-  (measured at spectral truncation $M=42$ on an Apple~M3~Pro: a ten-day forced run
-  takes $18.0$~s and its gradient $36.1$~s, after one-time compilation), compared
-  with the five forward integrations a one-sided finite-difference gradient over
-  the same four parameters would require. \autoref{fig:sensitivity} illustrates the payoff: a single
-  differentiation maps how the simulated temperature field responds, point by
-  point, to the radiative and drag forcing timescales over a $100$-day forced
-  hot-Jupiter integration.
-\item \textbf{Acceleration and vectorization.} The same code is just-in-time
-  compiled with \texttt{jax.jit} and runs unchanged on CPU or GPU. A ten-day,
-  $M=42$ forced integration that takes about $14.5$~minutes ($871$~s) in reference
-  NumPy \texttt{SWAMPE} completes in about $29$~seconds in \texttt{SWAMPE-JAX} on
-  the same machine, including one-time compilation, a roughly $30\times$ speedup
-  (measured on an Apple~M3~Pro, \texttt{JAX}~0.9.2). \texttt{jax.vmap} maps the
-  simulator over batches of parameters in a single compiled call, enabling large
-  ensemble parameter sweeps.
-\item \textbf{Numerical parity.} For default settings, \texttt{SWAMPE-JAX}
-  reproduces \texttt{SWAMPE}'s spectral-transform solver \citep{Hack:1992},
-  modified-Euler time differencing \citep{Langton:2008}, Robert--Asselin
-  filtering, sixth-order hyperdiffusion \citep{Gelb:2001}, and
-  Newtonian-relaxation-plus-drag forcing, including the historical conventions of
-  the reference code. Agreement is not bit-exact, because XLA and NumPy do not
-  evaluate floating-point expressions in the same order, but over a ten-day
-  forced hot-Jupiter integration the two implementations agree to a fractional
-  difference below $2\times10^{-7}$ in every field, with the geopotential
-  matching to a few parts in $10^{10}$ (\autoref{fig:parity}); the automated test
-  suite enforces tighter absolute tolerances still ($10^{-10}$ for vorticity and
-  divergence, $5\times10^{-8}$ for geopotential).
-\end{itemize}
+\subsection{Numerical parity}
 
-Together, these features let \texttt{SWAMPE-JAX} serve both as a drop-in
-replacement for \texttt{SWAMPE} and as a differentiable forward model for
-sensitivity analysis and gradient-based parameter studies.
+We reproduce \texttt{SWAMPE}'s
+spectral-transform solver \citep{Hack:1992}, modified-Euler time differencing
+\citep{Langton:2008}, Robert--Asselin filtering, sixth-order hyperdiffusion
+\citep{Gelb:2001}, and Newtonian-relaxation-plus-drag forcing. Agreement is not bit-exact, 
+as \texttt{XLA} and NumPy do not evaluate floating-point expressions in the same
+order. However, \autoref{fig:parity} shows that the two
+codes agree to at least within $2\times10^{-5}\,\%$ over a $100$-day forced hot-Jupiter integration
+benchmark -- the maximum relative error across all five fields, driven by the meridional wind
+$V$; the geopotential $\Phi$ and absolute vorticity $\eta$ agree far more tightly, to better
+than $3\times10^{-8}\,\%$ and $10^{-10}\,\%$ respectively. Other tests (not shown here) show
+similar agreement. The automated test suite enforces tighter absolute
+tolerances still ($10^{-10}$ for vorticity and divergence, $5\times10^{-8}$ for
+the geopotential) on shorter, fixture-scale runs.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{parity_comparison.png}
 \caption{Numerical parity between reference NumPy \texttt{SWAMPE} (left column)
-and \texttt{SWAMPE-JAX} (middle column) for a forced hot-Jupiter integration. A
-day--night Newtonian-relaxation forcing (amplitude
-$\Delta\Phi_{\mathrm{eq}}=10^{6}\,\mathrm{m^2\,s^{-2}}$, radiative and drag
-timescales of $10$ and $6$~hours) acts on a synchronously rotating planet with
-mean geopotential $\overline{\Phi}=3\times10^{5}\,\mathrm{m^2\,s^{-2}}$, rotation
-rate $\Omega=3.2\times10^{-5}\,\mathrm{s^{-1}}$, and radius
-$a=8.2\times10^{7}$~m, integrated for ten days at spectral truncation $M=42$ with
-a timestep of $120$~s. The forcing produces a hot substellar geopotential bulge
-and a superrotating equatorial jet; the total geopotential
-$\overline{\Phi}+\Phi$ stays positive everywhere, so the shallow-water layer
-thickness remains well defined. Rows show the absolute vorticity $\eta$,
-divergence $\delta$, geopotential $\Phi$, and the zonal and meridional winds $U$
-and $V$; the right column is the signed fractional difference between the two
-codes. Agreement is everywhere better than a fractional difference of
-$2\times10^{-7}$: the geopotential matches to a few parts in $10^{10}$ and the
-winds to better than two parts in $10^{7}$.}
+and \texttt{SWAMPE-JAX} (middle column) over a $100$-day forced hot-Jupiter
+benchmark.
+We apply a day--night Newtonian-relaxation forcing ($\Delta\Phi_{\mathrm{eq}}=10^{6}\,\mathrm{m^2\,s^{-2}}$
+with radiative and drag
+timescales of $10$ and $6$~hours) to a synchronously rotating planet with mean
+geopotential $\overline{\Phi}=3\times10^{5}\,\mathrm{m^2\,s^{-2}}$, rotation rate
+$\Omega=3.2\times10^{-5}\,\mathrm{s^{-1}}$, and radius $a=8.2\times10^{7}$~m, at
+spectral truncation $M=42$ with a $120$~s timestep.
+Rows show the absolute
+vorticity $\eta$, divergence $\delta$, geopotential $\Phi$, and the zonal and
+meridional winds $U$ and $V$. 
+The forcing drives a hot
+substellar geopotential bulge and a superrotating equatorial jet.
+Overall, the two codes show very close agreement.}
 \label{fig:parity}
 \end{figure}
+
+\subsection{Speed (CPU and GPU)}
+
+\texttt{SWAMPE-JAX} can run on either a
+CPU or GPU. A ten-day, $M=42$ forced integration ($120$~s timestep, ${\sim}7{,}200$
+steps) takes about $870$~s (${\sim}15$~min) for \texttt{SWAMPE}. Comparatively,
+the same run for \texttt{SWAMPE-JAX} takes $29$~s on a CPU and about
+$1.7$~s on a GPU\footnote{CPU timings were measured on an Apple~M3~Pro. GPU timings on a single \texttt{NVIDIA~A100}.}.
+This is roughly a $30\times$ (CPU) and $500\times$
+(GPU) speedup respectively; for users without GPU access, the CPU number is the more
+directly applicable figure.
+This speedup comes mainly from expressing the spectral transforms as vectorized array
+contractions in place of the reference code's per-element Python loops and compiling the
+entire time-integration loop into a single fused kernel.
+Using \texttt{jax.vmap}, we can also simulate a batch of
+models in a single compiled call. On the same
+A100, throughput saturates at a few dozen simultaneous trajectories, resulting in a speedup
+per simulation of approximately $6{,}700\times$ compared to the original, single-core
+\texttt{SWAMPE} (we did not benchmark \texttt{SWAMPE} under multi-core or cluster-level
+parallelism, so this reflects \texttt{SWAMPE-JAX}'s single-GPU batching advantage, not
+necessarily a ceiling on \texttt{SWAMPE}'s own parallel scaling).
+For a full 100-day simulation, the amortized cost per simulation is approximately $1$~s.
+We demonstrate this with a companion gradient-informed retrieval pipeline
+(\texttt{retrieval/}, not part of the core package) that recovers $\tau_{\mathrm{rad}}$ and
+$\tau_{\mathrm{drag}}$ from a synthetic phase curve via BlackJAX adaptive-tempered SMC:
+$\tau_{\mathrm{rad}}$ is tightly constrained, while $\tau_{\mathrm{drag}}$ is partially
+degenerate with $\tau_{\mathrm{rad}}$ and $\overline{\Phi}$ -- an information-content limit
+of a disk-integrated phase curve, not of the forward model.
+
+
+
+\subsection{Differentiability}
+
+\autoref{fig:sensitivity} shows how the simulated temperature field responds 
+to changes in the radiative and drag forcing timescales over a
+$100$-day forced hot-Jupiter integration.
+The final model state is differentiable with respect to the governing physical
+parameters (day--night forcing contrast, radiative and drag timescales, mean
+geopotential, rotation rate, planetary radius, timestep, and hyperdiffusion
+coefficients). We determine these sensitivities using forward mode
+automatic differentiation.
+
+Forward mode automatic differentiation is the natural choice for our current
+implementation at this integration length.
+The computational cost of forward mode differentiation grows with the number of inputs,
+but the memory cost is independent of the length of the integration.
+In our case, there are relatively few model inputs (e.g. timescales), but integration
+length can be hundreds of thousands of steps. Reverse mode is supported and is the default
+for shorter, terminal-state losses over many parameters; for losses that depend on the full
+trajectory at this length, however, the entire forward trajectory must currently be held in
+memory, which can grow to tens of gigabytes and exceed the memory of a single GPU.
+Checkpointed (rematerialized) reverse-mode scans reduce this memory cost to
+$O(\sqrt{\mathrm{steps}})$ \citep{Gaikwad:2025, Solvik:2025, Moses:2026} and are planned
+future work; forward mode is the present, parity-neutral solution for the long-trajectory
+sensitivities shown here.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{temperature_sensitivity_perhour_100d.png}
 \caption{Spatially resolved sensitivities of a forced hot-Jupiter atmosphere,
-obtained by automatic differentiation through a $100$-day integration in the
-regime of \autoref{fig:parity} (spectral truncation $M=42$, radiative timescale
-$\tau_{\mathrm{rad}}=10$~h, drag timescale $\tau_{\mathrm{drag}}=6$~h). From left
-to right, the panels show the simulated temperature field (a shallow-water proxy
-$T=(\overline{\Phi}+\Phi)/R_d$ with $R_d=3.78\times10^{3}\,\mathrm{J\,kg^{-1}\,K^{-1}}$;
-the substellar point is marked) and the exact derivative of that field with
-respect to the radiative timescale, $\partial T/\partial\tau_{\mathrm{rad}}$, and
-the drag timescale, $\partial T/\partial\tau_{\mathrm{drag}}$, both in K per hour.
-Each map is obtained from a single forward-mode pass through the full time
-integration, with no additional forward runs, and reproduces a finite-difference
-response to $r^2=0.998$ and $r^2=0.985$ for the radiative and drag panels
-respectively. Both sensitivities are largest near the substellar
-point: $\partial T/\partial\tau_{\mathrm{rad}}$ peaks on the hot spot itself and
-$\partial T/\partial\tau_{\mathrm{drag}}$ just downwind of it, decaying across the
-quiet nightside. Lengthening either timescale erodes the day--night contrast, the
-radiative timescale by weakening the thermal forcing and the drag timescale by
-letting the stronger circulation redistribute more heat.}
+obtained by forward-mode automatic differentiation through a $100$-day
+integration. From left to right, the panels show the simulated
+temperatures ($T=(\overline{\Phi}+\Phi)/R_d$ with
+$R_d=3.78\times10^{3}\,\mathrm{J\,kg^{-1}\,K^{-1}}$, following \cite{Perez-Becker:2013}),
+and the exact
+derivative of that field with respect to the radiative timescale,
+$\partial T/\partial\tau_{\mathrm{rad}}$, and the drag timescale,
+$\partial T/\partial\tau_{\mathrm{drag}}$.
+Lengthening either timescale
+decreases the day--night contrast: the radiative timescale by weakening the
+thermal forcing, the drag timescale by letting the stronger circulation
+redistribute more heat.}
 \label{fig:sensitivity}
 \end{figure}
 
-\section{Relation to SWAMPE and similar tools}
+Together, these features let \texttt{SWAMPE-JAX} serve both as a drop-in
+replacement for \texttt{SWAMPE} and as a differentiable forward model for
+sensitivity analysis and gradient-based parameter studies.
 
-\texttt{SWAMPE-JAX} shares an interface and a set of physical benchmarks with
-\texttt{SWAMPE} \citep{Landgren:2022} but no source code; it is not a wrapper.
-Reduced and two-dimensional dynamical models have a long history in exoplanet
-science: barotropic and shallow-water treatments of close-in giant planets
-\citep{Cho:2008}, analytic shallow-water theories of the day--night flow
-\citep{HengWorkman:2014}, and linear and diagnostic models of the wave-driven
-circulation \citep{Showman:2011, Hammond:2021}. \texttt{SWAMPE-JAX} adds
-automatic differentiation and GPU execution to this family. Differentiable,
-GPU-capable simulation has advanced neighboring fields, including
-machine-learning-accelerated computational fluid dynamics \citep{Kochkov:2021},
-neural general circulation models for Earth weather and climate
-\citep{Kochkov:2024}, and general spectral frameworks such as Dedalus
-\citep{Burns:2020}. Within exoplanet science, \texttt{ExoJAX}
-\citep{Kawahara:2022} brought automatic differentiation to high-resolution
-radiative transfer and spectral retrieval; \texttt{SWAMPE-JAX} is complementary
-in that it makes the atmospheric \textit{dynamics} differentiable. To our
-knowledge, no openly available exoplanet shallow-water model exposes gradients
-through the full atmospheric integration, and \texttt{SWAMPE-JAX} fills that gap
-while retaining the validated physics of \texttt{SWAMPE}.
+\section{Similar tools}
+
+\texttt{SWAMPE-JAX} is a full \texttt{JAX} rewrite of \texttt{SWAMPE}
+\citep{Landgren:2022}. It shares the interface and architecture but no
+source code. Related modeling tools include:
+
+\begin{itemize}
+\tightlist
+\item \texttt{SWAMPE}: the original NumPy implementation of this
+  shallow-water model \citep{Landgren:2022}.
+\item Fully three-dimensional general circulation models that solve a set of fluid
+  dynamics equations coupled to radiative transfer. These models determine
+  horizontal as well as vertical structure, but are far more computationally
+  demanding \citep[e.g.,][]{Showman:2009, Kataria:2016, Carone:2020, Roth:2024}.
+\item Other two-dimensional, single-layer models of close-in giant planets, both
+  numerical \citep[e.g.,][]{Cho:2008, Menou:2003, LangtonLaughlin:2008, Penn:2017}
+  and analytic \citep{HengWorkman:2014}.
+\item Similar two-dimensional shallow-water or primitive-equation models exist
+  for Earth's atmosphere and oceans. Some of these are also fully
+  differentiable \citep[e.g.,][]{Kochkov:2024, Klower:2024, Moses:2026, Davenport:2026}.
+\end{itemize}
+
+To our knowledge, no other openly available exoplanet shallow-water or general
+circulation model exposes gradients through the full atmospheric integration.
+JAX-based differentiable tools exist elsewhere in the exoplanet domain for spectral
+retrieval \citep{Kawahara:2022}, and the differentiable shallow-water and
+primitive-equation tools above target Earth's atmosphere and oceans, not exoplanets.
 
 \section{Acknowledgements}
-
-We thank Alice Nadeau for co-developing and openly releasing the original
-\texttt{SWAMPE} model. The authors used Claude (Anthropic) to assist with code
-development, code cleanup, and manuscript preparation. We acknowledge the
-developers of the open-source packages on which this work depends, in particular
-\texttt{JAX} \citep{jax:2018}, \texttt{NumPy} \citep{Harris:2020}, \texttt{SciPy}
-\citep{Virtanen:2020}, and \texttt{Matplotlib} \citep{Hunter:2007}.
+This research was carried out in part at the Jet Propulsion
+Laboratory, California Institute of Technology, under a contract with the National
+Aeronautics and Space Administration (80NM0018D0004). The authors used Claude
+(Anthropic) to assist with code development, code cleanup, and manuscript
+preparation. We acknowledge the developers of the open-source packages on which
+this work depends, in particular \texttt{JAX} \citep{jax:2018}, \texttt{NumPy}
+\citep{Harris:2020}, \texttt{SciPy} \citep{Virtanen:2020}, and \texttt{Matplotlib}
+\citep{Hunter:2007}.
 
 \bibliography{paper}
 
