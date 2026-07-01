@@ -120,10 +120,10 @@ MY_SWAMP/
 │   └── generate_reference_parity_fixtures.py
 ├── retrieval/                       # Differentiable SWAMP -> phase-curve retrieval (BlackJAX SMC)
 ├── data/                            # Regenerable .npz data (gitignored)
-├── figures/                         # Generated figures + parity output bundles (gitignored)
 └── paper/                           # JOSS paper -- self-contained: text, figures, raw data, generators
     ├── paper.tex, paper.bib, Makefile, README.md, speed_benchmark.md
     ├── scripts/                         # ALL paper-specific generators (parity/speed/figures/GPU sweep)
+    ├── figures/                         # Regenerable parity-run scratch output (gitignored)
     └── benchmark_data/                  # committed raw JSON + provenance for every paper number
 ```
 
@@ -768,7 +768,7 @@ What it does:
 - Saves `comparison_fields.npz` with the SWAMPE fields, MY_SWAMP fields, and absolute error arrays for `eta`, `delta`, `Phi`, `U`, and `V`.
 - Generates `field_comparison.png` — a grid of side-by-side maps showing the SWAMPE fields, MY_SWAMP fields, and signed fractional differences for each field.
 
-All output lands in `figures/long_run_parity_outputs/forced_default_100d/` by default.
+All output lands in `paper/figures/long_run_parity_outputs/forced_default_100d/` by default.
 
 Key options:
 

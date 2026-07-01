@@ -69,11 +69,6 @@ past that, batch time scales with `N` and throughput plateaus. Sweep on the A100
 - No disk I/O (SWAMPE `saveflag=False`; my_swamp returns terminal state only).
 - CPU and GPU are necessarily different hardware (SWAMPE is CPU-only NumPy); the cleanest
   same-machine, same-code comparison is GPU-vs-CPU on `my_swamp` itself (21.9x, above).
-- The batched-throughput number is `SWAMPE-JAX`'s single-GPU `vmap` advantage vs.
-  single-core `SWAMPE` -- `SWAMPE` was not benchmarked under multi-core or cluster-level
-  parallelism, so this is not necessarily a ceiling on `SWAMPE`'s own parallel scaling.
-  This caveat is recorded here, not spelled out in `paper.tex` itself (the paper text is
-  intentionally kept to its original, concise wording -- see git history 2026-06-30).
 
 ## Paper text mapping
 

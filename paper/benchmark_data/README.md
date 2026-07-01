@@ -53,8 +53,8 @@ wall-clock than a long run's).
 
 | File | What it is | How it was generated |
 |---|---|---|
-| `cpu_parity_100day_summary.json` | Copy of the 100-day SWAMPE-vs-`my_swamp` field-error + runtime summary backing Figure 1 and the parity claim. `runtime_seconds = {swampe: 8654.59, my_swamp: 240.71}`. | `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python paper/scripts/compare_long_run_parity.py --days 100` (also run via `paper/Makefile`'s `figures` target). Original output: `figures/long_run_parity_outputs/forced_default_100d/summary.json` (gitignored; this is a tracked copy). Machine: Apple M3 Pro, single CPU core, on a quiet system (load average confirmed before starting). |
-| `cpu_speed_10day_summary.json` | Copy of the 10-day SWAMPE-vs-`my_swamp` runtime summary backing the CPU half of the Speed claim. `runtime_seconds = {swampe: 817.353, my_swamp: 25.220}` (CPU speedup ~32.4x). | `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python paper/scripts/compare_long_run_parity.py --days 10 --out-dir figures/long_run_parity_outputs/forced_default_10d`. Same machine/conditions as above. The `--out-dir` override exists specifically so a 10-day run can never again silently overwrite the 100-day run's output directory (they used to share one path). |
+| `cpu_parity_100day_summary.json` | Copy of the 100-day SWAMPE-vs-`my_swamp` field-error + runtime summary backing Figure 1 and the parity claim. `runtime_seconds = {swampe: 8654.59, my_swamp: 240.71}`. | `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python paper/scripts/compare_long_run_parity.py --days 100` (also run via `paper/Makefile`'s `figures` target). Original output: `paper/figures/long_run_parity_outputs/forced_default_100d/summary.json` (gitignored; this is a tracked copy). Machine: Apple M3 Pro, single CPU core, on a quiet system (load average confirmed before starting). |
+| `cpu_speed_10day_summary.json` | Copy of the 10-day SWAMPE-vs-`my_swamp` runtime summary backing the CPU half of the Speed claim. `runtime_seconds = {swampe: 817.353, my_swamp: 25.220}` (CPU speedup ~32.4x). | `JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python paper/scripts/compare_long_run_parity.py --days 10 --out-dir paper/figures/long_run_parity_outputs/forced_default_10d`. Same machine/conditions as above. The `--out-dir` override exists specifically so a 10-day run can never again silently overwrite the 100-day run's output directory (they used to share one path). |
 | `gpu_vmap_sweep_10day.json` | The GPU single-trajectory (`N=1`) and batched-throughput (`jax.vmap`, `N` up to 64) sweep backing the GPU half of the Speed claim, all at the 10-day window. | `paper/scripts/swampe_gpu_vmap_test.ipynb`, run by the package author on a Google Colab `NVIDIA A100-SXM4-40GB` GPU runtime, `Run all`. Pasted back verbatim from the notebook's `===== RESULTS =====` block; see `_provenance` in the JSON. A CLI-equivalent, `paper/scripts/swampe_gpu_vmap_test.py`, exists for non-Colab GPU machines and produces the same schema (plus its own JSON dump) but was not the source of the numbers actually quoted in the paper -- the notebook was. |
 
 ## Reproducing
@@ -67,7 +67,7 @@ cd paper && make figures
 cd paper && make speed
 # equivalent, run from the repo root:
 JAX_PLATFORMS=cpu SWAMPE_JAX_ENABLE_X64=1 python paper/scripts/compare_long_run_parity.py \
-    --days 10 --out-dir figures/long_run_parity_outputs/forced_default_10d
+    --days 10 --out-dir paper/figures/long_run_parity_outputs/forced_default_10d
 
 # Speed, GPU half (10-day) -- needs a GPU:
 python paper/scripts/swampe_gpu_vmap_test.py --sweep-days 10

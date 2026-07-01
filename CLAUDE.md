@@ -74,7 +74,6 @@ MY_SWAMP/
 │   ├── run.sh                        # SLURM launcher
 │   └── README.md
 ├── data/                        # regenerable .npz inputs/outputs (gitignored)
-├── figures/                     # generated figures + parity output bundles (gitignored)
 └── paper/                       # JOSS paper -- self-contained: text, figures, raw data, generators
     ├── paper.tex, paper.bib, Makefile, README.md
     ├── speed_benchmark.md             # CPU/GPU speed numbers + how they map into paper.tex
@@ -87,6 +86,8 @@ MY_SWAMP/
     │   │                                #   of the paper's GPU numbers)
     │   ├── swampe_gpu_vmap_test.py       # CLI port of the above, for non-Colab GPU machines
     │   └── science.mplstyle              # plotting style shared by the generators above
+    ├── figures/                       # regenerable parity-run scratch output (gitignored; moved
+    │                                   # from top-level figures/ 2026-06-30, same rationale as scripts/)
     └── benchmark_data/                # committed raw JSON + provenance for every paper number;
                                         # see paper/benchmark_data/README.md before touching a number
 ```

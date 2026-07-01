@@ -10,7 +10,7 @@ Default behavior
 - Uses the repository's "forced default" parameter set.
 - Runs a 100-day integration on CPU in float64 mode.
 - Executes both legacy `SWAMPE` and `my_swamp`.
-- Writes comparison fields plus error summaries to `figures/long_run_parity_outputs/`.
+- Writes comparison fields plus error summaries to `paper/figures/long_run_parity_outputs/`.
 
 Example
 -------
@@ -32,7 +32,7 @@ from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parents[2]
 REF_ROOT = ROOT.parents[0] / "SWAMPE"
-DEFAULT_OUT_DIR = ROOT / "figures" / "long_run_parity_outputs" / "forced_default_100d"
+DEFAULT_OUT_DIR = ROOT / "paper" / "figures" / "long_run_parity_outputs" / "forced_default_100d"
 
 
 # Keep parity runs deterministic and aligned with the repository contract.
