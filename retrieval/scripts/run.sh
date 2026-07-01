@@ -98,8 +98,18 @@ JAX_VERSION="${JAX_VERSION:-0.6.2}"
 if [ "${SWAMP_SKIP_INSTALL:-0}" != "1" ]; then
   echo "------ installing GPU JAX + deps (jax[cuda12]==$JAX_VERSION) ------"
   python -m pip install --upgrade "jax[cuda12]==${JAX_VERSION}"
-  python -m pip install --upgrade --no-deps jaxoplanet
-  python -m pip install --upgrade "blackjax>=1.2"
+  # jaxoplanet's own requirements (equinox, jax, jaxlib) are all UNPINNED, so
+  # installing it normally (not --no-deps) cannot touch the jax[cuda12] pin
+  # above -- pip leaves an already-satisfied unpinned requirement alone. On a
+  # genuinely fresh env, --no-deps here silently skips equinox (a hard
+  # jaxoplanet dependency) and breaks the import.
+  python -m pip install --upgrade jaxoplanet
+  # Upper-bound blackjax: 1.4+ requires jax>=0.9.0/jaxlib>=0.9.0 (1.2.x/1.3.x
+  # only need jax/jaxlib>=0.4.16, satisfied by the 0.6.2 pin above). An
+  # unbounded install here silently drags jax/jaxlib up to satisfy blackjax
+  # while jax-cuda12-plugin (installed above, pinned to JAX_VERSION) is left
+  # behind -- the two then mismatch and JAX silently falls back to CPU.
+  python -m pip install --upgrade "blackjax>=1.2,<1.4"
 fi
 # Fail loudly NOW if the version combo is broken, not mid-run.
 python - <<'PY'
