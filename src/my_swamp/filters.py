@@ -33,6 +33,10 @@ def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
 
     Uses the original implicit filter formulation.
 
+    Note: the maintained driver only wires up the sixth-order filters
+    (:func:`sigma6`/:func:`sigma6Phi`); this fourth-order variant is retained
+    to mirror the reference SWAMPE ``filters`` API and is otherwise unused.
+
     Parameters
     ----------
     M : int
@@ -57,10 +61,14 @@ def sigma(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
 
 
 def sigmaPhi(M: int, N: int, K4: float, a: float, dt: float) -> jnp.ndarray:
-    """Computes the coefficient for the fourth degree diffusion filter 
+    """Computes the coefficient for the fourth degree diffusion filter
     described in Gelb and Gleeson (eq. 12) for geopotential.
-    
+
     Uses original implicit filter formulation (no factor1 subtraction).
+
+    Note: the maintained driver only wires up the sixth-order filters
+    (:func:`sigma6`/:func:`sigma6Phi`); this fourth-order variant is retained
+    to mirror the reference SWAMPE ``filters`` API and is otherwise unused.
     
     Parameters
     ----------

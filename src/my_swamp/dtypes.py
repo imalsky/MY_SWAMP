@@ -4,15 +4,16 @@ Centralized dtype choices for the SWAMPE JAX port.
 
 Goals
 -----
-- Default to float32 for GPU throughput (JAX default).
-- Allow opting into float64 for numerical parity with the reference NumPy SWAMPE
-  by enabling JAX 64-bit mode (``jax_enable_x64=True``).
+- Default to float64: the package ``__init__`` enables JAX 64-bit mode at import
+  time for numerical parity with the reference NumPy SWAMPE (which is float64).
+- Allow opting into float32 for GPU throughput by disabling x64.
 
-How to enable float64
----------------------
+How to control precision
+------------------------
 Recommended: set the environment variable before importing JAX / this package::
 
-    export SWAMPE_JAX_ENABLE_X64=1
+    export SWAMPE_JAX_ENABLE_X64=1   # float64 (the default when unset)
+    export SWAMPE_JAX_ENABLE_X64=0   # float32/complex64 (faster, not parity-grade)
 
 You may also set::
 
