@@ -130,20 +130,47 @@ if [ "${SWAMP_SKIP_INSTALL:-0}" != "1" ]; then
   FORCE="${FORCE:-0}"
   JAX_SPEC="${JAX_SPEC:-jax[cuda12]==0.6.2}"
 
-  # Preflight: fail fast with an actionable message instead of a wall of pip
-  # SSL retries. A cert-verify failure here usually means the proxy is doing
-  # TLS interception this node's trust store doesn't recognize -- installing
-  # from a LOGIN node (real internet, no proxy) into the same PYTHONUSERBASE
-  # and resubmitting sidesteps it entirely (the checks below skip the network
-  # the moment the user-site already has the package).
+  # Preflight 1: basic reachability through the proxy.
   if curl -sSI --max-time 15 https://pypi.org/simple/ >/dev/null 2>&1; then
-    echo "[net] reached PyPI through the proxy."
+    echo "[net] reached PyPI through the proxy (curl)."
   else
-    echo "[net] WARNING: could not reach PyPI through '${http_proxy}' (unreachable or TLS-intercepted)."
-    echo "[net] If installs below fail, run once on a LOGIN node instead (real internet, same env/module"
-    echo "      setup as above, PYTHONUSERBASE=${PYTHONUSERBASE}), e.g.:"
-    echo "        pip install --user -U '${JAX_SPEC}' jaxoplanet 'blackjax>=1.2,<1.4' corner"
-    echo "      then resubmit this job -- an already-installed user-site is reused without any network access."
+    echo "[net] WARNING: curl could not reach PyPI through '${http_proxy}' either -- installs below will"
+    echo "      likely fail outright. Check the proxy address/availability first."
+  fi
+
+  # Preflight 2: Python's own SSL trust store, which pip actually uses (this is
+  # what broke jobs 63456/63461: curl succeeded via the SYSTEM CA bundle above,
+  # but this conda env's bundled certifi/openssl CA bundle is stale and can't
+  # verify pypi.org -- "CERTIFICATE_VERIFY_FAILED: unable to get local issuer
+  # certificate". Not a proxy/TLS-interception problem -- curl proves the proxy
+  # passes a legitimate cert through fine). Probe common system CA bundle
+  # locations and point pip at the first one that actually verifies, rather
+  # than disabling verification.
+  if ! python -c "
+import ssl, urllib.request
+urllib.request.urlopen('https://pypi.org/simple/', context=ssl.create_default_context(), timeout=15)
+" >/dev/null 2>&1; then
+    echo "[net] Python's default SSL trust store can't verify PyPI (stale conda ca-certificates) -- probing system CA bundles..."
+    for _cand in /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt \
+                 /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/cert.pem; do
+      if [ -f "${_cand}" ] && python -c "
+import ssl, urllib.request, sys
+urllib.request.urlopen('https://pypi.org/simple/', context=ssl.create_default_context(cafile=sys.argv[1]), timeout=15)
+" "${_cand}" >/dev/null 2>&1; then
+        echo "[net] using system CA bundle for pip: ${_cand}"
+        export SSL_CERT_FILE="${_cand}" PIP_CERT="${_cand}" REQUESTS_CA_BUNDLE="${_cand}"
+        break
+      fi
+    done
+    if [ -z "${SSL_CERT_FILE:-}" ]; then
+      echo "[net] WARNING: no working system CA bundle found; pip installs below will likely fail with a cert error."
+      echo "      Fix: refresh this env's trust store, e.g."
+      echo "        conda install -n ${CONDA_ENV} -c conda-forge ca-certificates"
+      echo "      or pre-install once on a LOGIN node into PYTHONUSERBASE=${PYTHONUSERBASE} and resubmit --"
+      echo "      the checks below skip the network entirely once the user-site already has the package."
+    fi
+  else
+    echo "[net] Python's default SSL trust store verifies PyPI fine."
   fi
 
   ENV_JAX_VER="$(PYTHONNOUSERSITE=1 python -c 'import importlib.metadata as m;print(m.version("jax"))' 2>/dev/null || true)"
